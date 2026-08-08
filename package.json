@@ -7,15 +7,21 @@
   "type": "module",
   "main": "electron/main.js",
   "scripts": {
+    "postinstall": "node scripts/ensure-electron.cjs",
+    "electron:ensure": "node scripts/ensure-electron.cjs",
+    "electron:repair": "node scripts/ensure-electron.cjs --force",
     "dev:react": "vite",
-    "dev:electron": "wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .",
-    "dev": "concurrently \"npm run dev:react\" \"npm run dev:electron\"",
+    "dev:electron": "node scripts/ensure-electron.cjs && wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .",
+    "dev": "node scripts/ensure-electron.cjs && concurrently \"npm run dev:react\" \"npm run dev:electron\"",
     "build": "tsc -b && vite build",
-    "electron:build": "npm run build && node scripts/write-electron-config.cjs && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win",
-    "electron:build:mac": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --x64 --arm64",
-    "electron:build:mac:signed": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=true electron-builder --mac",
-    "electron:publish": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win -p always",
+    "electron:build": "node scripts/ensure-electron.cjs && npm run build && node scripts/write-electron-config.cjs && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win --publish never",
+    "electron:build:mac": "node scripts/ensure-electron.cjs && npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --x64 --arm64",
+    "electron:build:mac:signed": "node scripts/ensure-electron.cjs && npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=true electron-builder --mac",
+    "electron:publish": "node scripts/ensure-electron.cjs && npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win -p always",
     "preview": "vite preview"
+  },
+  "engines": {
+    "node": ">=20 <25"
   },
   "dependencies": {
     "active-win": "^7.7.2",
@@ -34,7 +40,7 @@
     "@vitejs/plugin-react": "^5.1.1",
     "concurrently": "^9.2.1",
     "cross-env": "^7.0.3",
-    "electron": "^40.6.0",
+    "electron": "^40.10.6",
     "electron-builder": "^26.8.1",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",

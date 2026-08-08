@@ -1,3 +1,62 @@
+# EmpTrakr Desktop
+
+Electron + React + Vite desktop time tracker.
+
+## Prerequisites
+
+- **Node.js 20 LTS** recommended (Node 24 works for Electron package install; native modules may need VS C++ Build Tools)
+- Windows: optional **Visual Studio Build Tools** with “Desktop development with C++” if `active-win` / native deps fail to build
+
+## Setup
+
+```bash
+npm install
+```
+
+`postinstall` runs `scripts/ensure-electron.cjs`, which verifies `electron.exe` exists and re-downloads it if the install is broken.
+
+## Development
+
+```bash
+npm run dev
+```
+
+This checks Electron first, then starts Vite + Electron.
+
+### Electron binary broken?
+
+If you see:
+
+> Electron failed to install correctly, please delete node_modules/electron and try installing again
+
+Run:
+
+```bash
+npm run electron:repair
+```
+
+Or manually:
+
+```bash
+# PowerShell
+Remove-Item -Recurse -Force node_modules\electron
+npm cache clean --force
+# Optional mirror if GitHub downloads fail:
+# $env:ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
+npm install electron --save-dev --foreground-scripts
+```
+
+## Scripts
+
+| Command | Purpose |
+|---------|---------|
+| `npm run dev` | Dev app (auto-ensures Electron) |
+| `npm run electron:ensure` | Check/repair Electron binary if missing |
+| `npm run electron:repair` | Force reinstall Electron binary |
+| `npm run electron:build` | Windows installer |
+
+---
+
 # React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useTimer, formatDuration } from '../hooks/useTimer';
 import { useAppTracker } from '../hooks/useAppTracker';
+import { WEB_BASE } from '../config';
 import type { User } from '../types';
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -497,7 +498,7 @@ export default function Dashboard({ view, user, onLogout }: DashboardProps) {
                     <div style={{ display: 'flex', justifyContent: 'center', gap: 16, marginTop: 16 }}>
                         <button
                             className="btn"
-                            onClick={() => (window.electronAPI as any)?.openDashboard?.()}
+                            onClick={() => (window.electronAPI as any)?.openDashboard?.(`${WEB_BASE.replace(/\/+$/, '')}/dashboard`)}
                             style={{ flex: 1, padding: '10px', fontSize: 13, background: 'transparent', border: '1px solid #e2e8f0', color: '#64748b', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}
                         >
 

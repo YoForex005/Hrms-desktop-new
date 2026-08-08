@@ -636,20 +636,30 @@ app.whenReady().then(() => {
     });
 
     // ── IPC: Open Login in System Browser (Device Flow) ─────────────────────
-    // Renderer sends the one-time deviceCode it generated.
-    // We embed it as ?desktopCode=<uuid> so the website POSTs the session
-    // to the backend by that code. The renderer polls the backend every 2s.
-    ipcMain.on('open-login', (_event, deviceCode) => {
-        const loginUrl = new URL('/login', WEB_BASE);
-        loginUrl.searchParams.set('desktopCode', String(deviceCode));
-        loginUrl.searchParams.set('returnTo', 'desktop');
-        shell.openExternal(loginUrl.toString());
-        console.log('[Auth] Opened browser login with deviceCode:', deviceCode);
+    // Renderer may send either:
+    //   - a one-time deviceCode (legacy), or
+    //   - a full login URL built from its own WEB_BASE (preferred — matches UI label)
+    // Website POSTs the session to the backend by that code; desktop polls every 2s.
+    ipcMain.on('open-login', (_event, payload) => {
+        let loginUrlString;
+        if (typeof payload === 'string' && /^https?:\/\//i.test(payload)) {
+            loginUrlString = payload;
+        } else {
+            const loginUrl = new URL('/login', WEB_BASE);
+            loginUrl.searchParams.set('desktopCode', String(payload ?? ''));
+            loginUrl.searchParams.set('returnTo', 'desktop');
+            loginUrlString = loginUrl.toString();
+        }
+        shell.openExternal(loginUrlString);
+        console.log('[Auth] Opened browser login:', loginUrlString);
     });
 
-    ipcMain.on('open-dashboard', () => {
-        shell.openExternal(new URL('/dashboard', WEB_BASE).toString());
-        console.log('[Auth] Opened browser dashboard');
+    ipcMain.on('open-dashboard', (_event, payload) => {
+        const dashboardUrl = (typeof payload === 'string' && /^https?:\/\//i.test(payload))
+            ? payload
+            : new URL('/dashboard', WEB_BASE).toString();
+        shell.openExternal(dashboardUrl);
+        console.log('[Auth] Opened browser dashboard:', dashboardUrl);
     });
 
     ipcMain.on('restart-app', () => {

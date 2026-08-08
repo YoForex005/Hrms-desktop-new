@@ -123,15 +123,18 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
 
     const handleOpenBrowser = () => {
         const code = deviceCode.current;
-        const api = window.electronAPI as { openLogin?: (deviceCode: string) => void } | undefined;
+        // Always build URL from renderer WEB_BASE so UI label and browser match
+        // (avoids production emptrakr.com when main-process config is stale).
+        const loginUrl =
+            `${WEB_BASE.replace(/\/+$/, '')}/login` +
+            `?desktopCode=${encodeURIComponent(code)}&returnTo=desktop`;
+        const api = window.electronAPI as { openLogin?: (codeOrUrl: string) => void } | undefined;
         if (api?.openLogin) {
-            api.openLogin(code);
+            api.openLogin(loginUrl);
         } else {
-            window.open(
-                `${WEB_BASE}/login?desktopCode=${encodeURIComponent(code)}&returnTo=desktop`,
-                '_blank'
-            );
+            window.open(loginUrl, '_blank');
         }
+        console.log('[Auth] Opening browser login:', loginUrl, 'API_BASE=', API_BASE);
         sessionConsumedRef.current = false;
         setExpired(false);
         setWaiting(true);
