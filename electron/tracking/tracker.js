@@ -1,4 +1,4 @@
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const axios = require('axios');
 const path = require('path');
 const { describeHttpError } = require('./httpError');
@@ -38,7 +38,7 @@ const EXCLUDED_PROCESSES = [
 ];
 
 
-const PS_SCRIPT = `
+const PS_INIT_SCRIPT = `
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -139,60 +139,69 @@ function Get-WindowUrl {
     return $null
 }
 
-$foregroundHwnd = [WinAPI]::GetForeground()
-$foregroundProcId = 0
-[WinAPI]::GetWindowThreadProcessId($foregroundHwnd, [ref]$foregroundProcId) | Out-Null
+function Invoke-TrackerScan {
+    $foregroundHwnd = [WinAPI]::GetForeground()
+    $foregroundProcId = 0
+    [WinAPI]::GetWindowThreadProcessId($foregroundHwnd, [ref]$foregroundProcId) | Out-Null
 
-$windows = [WinAPI]::GetAllVisibleWindows()
-$results = @()
+    $windows = [WinAPI]::GetAllVisibleWindows()
+    $results = @()
 
-foreach ($win in $windows) {
-    $procId = $win.Item1
-    $hwnd = $win.Item2
-    $title = $win.Item3
+    foreach ($win in $windows) {
+        $procId = $win.Item1
+        $hwnd = $win.Item2
+        $title = $win.Item3
 
-    if ($procId -eq 0) { continue }
+        if ($procId -eq 0) { continue }
 
-    $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
-    if ($null -eq $proc) { continue }
+        $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
+        if ($null -eq $proc) { continue }
 
-    $path = $null
-    try { $path = $proc.Path } catch {}
+        $path = $null
+        try { $path = $proc.Path } catch {}
 
-    $displayName = $null
-    if ($path) {
-        try {
-            $fvi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($path)
-            if ($fvi.ProductName) { $displayName = $fvi.ProductName }
-            elseif ($fvi.FileDescription) { $displayName = $fvi.FileDescription }
-        } catch {}
+        $displayName = $null
+        if ($path) {
+            try {
+                $fvi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($path)
+                if ($fvi.ProductName) { $displayName = $fvi.ProductName }
+                elseif ($fvi.FileDescription) { $displayName = $fvi.FileDescription }
+            } catch {}
+        }
+
+        if (-not $displayName) {
+            try { if ($proc.Description) { $displayName = $proc.Description } } catch {}
+        }
+
+        if (-not $displayName) { $displayName = $proc.ProcessName }
+
+        $pname = $proc.ProcessName
+        $url = $null
+        if ($pname -match '^(chrome|msedge|brave|firefox)$') {
+            $url = Get-WindowUrl -Hwnd $hwnd
+        }
+
+        $results += [PSCustomObject]@{
+            Process      = $pname
+            DisplayName  = $displayName
+            Title        = $title
+            Url          = $url
+            Path         = $path
+            PID          = [int]$procId
+            HWND         = $hwnd.ToInt64()
+            IsForeground = ($procId -eq $foregroundProcId)
+        }
     }
 
-    if (-not $displayName) {
-        try { if ($proc.Description) { $displayName = $proc.Description } } catch {}
-    }
-
-    if (-not $displayName) { $displayName = $proc.ProcessName }
-
-    $pname = $proc.ProcessName
-    $url = $null
-    if ($pname -match '^(chrome|msedge|brave|firefox)$') {
-        $url = Get-WindowUrl -Hwnd $hwnd
-    }
-
-    $results += [PSCustomObject]@{
-        Process      = $pname
-        DisplayName  = $displayName
-        Title        = $title
-        Url          = $url
-        Path         = $path
-        PID          = [int]$procId
-        HWND         = $hwnd.ToInt64()
-        IsForeground = ($procId -eq $foregroundProcId)
-    }
+    $json = if ($results.Count -eq 0) { '[]' } else { $results | ConvertTo-Json -Compress -Depth 4 }
+    Write-Output "___EMP_START___"
+    Write-Output $json
+    Write-Output "___EMP_END___"
 }
+`;
 
-$results | ConvertTo-Json -Compress -Depth 4
+const PS_FALLBACK_SCRIPT = `${PS_INIT_SCRIPT}
+Invoke-TrackerScan
 `;
 
 const APP_NAME_OVERRIDES = {
@@ -269,7 +278,7 @@ function getDesktopAppName(processName, displayName) {
 
 function isBrowserProcess(processName) {
     const p = normalizeProcessName(processName);
-    return p === 'chrome' || p === 'msedge' || p === 'brave' || p === 'firefox';
+    return /^(chrome|msedge|brave|firefox|opera|operagx|vivaldi|arc|safari)$/i.test(p);
 }
 
 function getBrowserFallback(processName) {
@@ -305,11 +314,103 @@ function normalizeUrl(rawUrl) {
     }
 }
 
+let persistentPs = null;
+let psBuffer = '';
+let pendingQuery = null;
+let psInitPromise = null;
+
+function killPersistentPs() {
+    if (persistentPs) {
+        try {
+            persistentPs.stdin.end();
+            persistentPs.kill();
+        } catch (_) {}
+        persistentPs = null;
+    }
+    psBuffer = '';
+    if (pendingQuery) {
+        pendingQuery.resolve([]);
+        pendingQuery = null;
+    }
+    psInitPromise = null;
+}
+
+function initPersistentPs() {
+    if (persistentPs && !persistentPs.killed) {
+        return Promise.resolve(true);
+    }
+    if (psInitPromise) return psInitPromise;
+
+    psInitPromise = new Promise((resolve) => {
+        try {
+            persistentPs = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-STA', '-Command', '-'], {
+                windowsHide: true,
+                stdio: ['pipe', 'pipe', 'pipe']
+            });
+
+            psBuffer = '';
+
+            persistentPs.stdout.on('data', (chunk) => {
+                psBuffer += chunk.toString();
+                if (psBuffer.includes('___EMP_INIT_DONE___')) {
+                    psBuffer = '';
+                    resolve(true);
+                    return;
+                }
+                if (psBuffer.includes('___EMP_END___')) {
+                    const startIdx = psBuffer.indexOf('___EMP_START___');
+                    const endIdx = psBuffer.indexOf('___EMP_END___');
+                    if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+                        const raw = psBuffer.substring(startIdx + '___EMP_START___'.length, endIdx).trim();
+                        psBuffer = psBuffer.substring(endIdx + '___EMP_END___'.length);
+                        if (pendingQuery) {
+                            const { resolve: res, timer } = pendingQuery;
+                            pendingQuery = null;
+                            if (timer) clearTimeout(timer);
+                            try {
+                                let data = raw ? JSON.parse(raw) : [];
+                                if (!Array.isArray(data)) data = [data];
+                                res(data);
+                            } catch (e) {
+                                console.log('[Tracker] PS JSON parse error:', e.message);
+                                res([]);
+                            }
+                        }
+                    }
+                }
+            });
+
+            persistentPs.stderr.on('data', (d) => {
+                const msg = d.toString().trim();
+                if (msg) console.log('[Tracker] Persistent PS stderr:', msg);
+            });
+
+            persistentPs.on('error', (err) => {
+                console.log('[Tracker] Persistent PS process error:', err.message);
+                killPersistentPs();
+            });
+
+            persistentPs.on('exit', () => {
+                killPersistentPs();
+            });
+
+            // Send initialization commands
+            persistentPs.stdin.write(PS_INIT_SCRIPT + '\nWrite-Output "___EMP_INIT_DONE___"\n');
+        } catch (err) {
+            console.log('[Tracker] Failed to spawn persistent PS:', err.message);
+            killPersistentPs();
+            resolve(false);
+        }
+    });
+
+    return psInitPromise;
+}
+
 async function getRunningApps() {
     if (process.platform === 'darwin') {
         try {
             const activeWin = require('active-win');
-            const win = await activeWin({ screenRecordingPermission: false }); // false avoids annoying popups instantly if denied, though they must enable it manually
+            const win = await activeWin({ screenRecordingPermission: false });
             if (!win) return [];
             
             return [{
@@ -328,16 +429,36 @@ async function getRunningApps() {
         }
     }
 
-    // Windows fallback
+    // Windows persistent runner
+    try {
+        await initPersistentPs();
+        if (persistentPs && !persistentPs.killed && !pendingQuery) {
+            return await new Promise((resolve) => {
+                const timer = setTimeout(() => {
+                    console.log('[Tracker] Persistent PS query timeout (10s), recycling...');
+                    killPersistentPs();
+                    resolve([]);
+                }, 10000);
+
+                pendingQuery = { resolve, timer };
+                persistentPs.stdin.write('Invoke-TrackerScan\n');
+            });
+        }
+    } catch (err) {
+        console.log('[Tracker] Persistent PS scan failed, falling back:', err.message);
+        killPersistentPs();
+    }
+
+    // Fallback to one-shot execFile if persistent process failed or unavailable
     return new Promise(resolve => {
         execFile(
             'powershell.exe',
-            ['-NoProfile', '-NonInteractive', '-STA', '-Command', PS_SCRIPT],
+            ['-NoProfile', '-NonInteractive', '-STA', '-Command', PS_FALLBACK_SCRIPT],
             { timeout: 12000, windowsHide: true, maxBuffer: 1024 * 1024 * 4 },
             (err, stdout, stderr) => {
                 if (err || !stdout || !stdout.trim()) {
-                    if (stderr && String(stderr).trim()) console.log('[Tracker] PowerShell stderr:', String(stderr).trim());
-                    if (err) console.log('[Tracker] PowerShell error:', err.message);
+                    if (stderr && String(stderr).trim()) console.log('[Tracker] Fallback PS stderr:', String(stderr).trim());
+                    if (err) console.log('[Tracker] Fallback PS error:', err.message);
                     return resolve([]);
                 }
                 try {
@@ -345,7 +466,7 @@ async function getRunningApps() {
                     if (!Array.isArray(data)) data = [data];
                     resolve(data);
                 } catch (e) {
-                    console.log('[Tracker] PowerShell JSON parse error:', e.message);
+                    console.log('[Tracker] Fallback PS JSON parse error:', e.message);
                     resolve([]);
                 }
             }
@@ -357,10 +478,10 @@ function getKeyForApp(app) {
     const proc = normalizeProcessName(app.Process);
     if (isBrowserProcess(proc)) {
         const url = normalizeUrl(app.Url);
-        // If we can't read the tab URL, skip this window entirely.
-        // The individual tab URLs are already tracked as separate entries,
-        // so showing "Google Chrome" alongside them would be redundant.
-        return url || '';
+        // If tab URL is available, track the specific website domain.
+        // If tab URL cannot be extracted by UIAutomation, fallback to the browser application
+        // so that active browsing work is never dropped or recorded as 0!
+        return url || getDesktopAppName(proc, app.DisplayName);
     }
     return getDesktopAppName(proc, app.DisplayName);
 }
@@ -513,19 +634,12 @@ function getUsageArray() {
         .sort((a, b) => b.seconds - a.seconds);
 }
 
-function startTracking(mainWindow) {
-    if (trackingInterval) return;
+let isPolling = false;
 
-    console.log('[Tracker] Started polling every', TRACKING_INTERVAL_MS / 1000, 'seconds');
-    console.log('[Tracker] API base:', API_BASE);
-
-    recordActiveWindow().then(data => {
-        if (data && mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('app-tracker-update', data);
-        }
-    });
-
-    trackingInterval = setInterval(async () => {
+async function runTrackerPoll(mainWindow) {
+    if (isPolling) return;
+    isPolling = true;
+    try {
         const data = await recordActiveWindow();
 
         if (data && mainWindow && !mainWindow.isDestroyed()) {
@@ -537,6 +651,23 @@ function startTracking(mainWindow) {
             lastSyncTime = now;
             if (data && data.usage && data.usage.length > 0) syncDataToBackend(data);
         }
+    } catch (err) {
+        console.error('[Tracker] Poll error:', err);
+    } finally {
+        isPolling = false;
+    }
+}
+
+function startTracking(mainWindow) {
+    if (trackingInterval) return;
+
+    console.log('[Tracker] Started polling every', TRACKING_INTERVAL_MS / 1000, 'seconds');
+    console.log('[Tracker] API base:', API_BASE);
+
+    runTrackerPoll(mainWindow);
+
+    trackingInterval = setInterval(() => {
+        runTrackerPoll(mainWindow);
     }, TRACKING_INTERVAL_MS);
 
     console.log('[Tracker] Interval registered');
@@ -546,6 +677,8 @@ function stopTracking() {
     if (!trackingInterval) return;
     clearInterval(trackingInterval);
     trackingInterval = null;
+    isPolling = false;
+    killPersistentPs();
     console.log('[Tracker] Stopped');
 }
 

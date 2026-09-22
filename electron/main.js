@@ -65,7 +65,7 @@ if (!gotSingleInstanceLock) {
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 const runtimeConfig = readRuntimeConfig();
 const API_BASE = process.env.API_BASE || runtimeConfig.API_BASE || 'https://hrmsbackend.yoforex.net/api';
-const WEB_BASE = process.env.WEB_BASE || runtimeConfig.WEB_BASE || (isDev ? 'http://localhost:3000' : 'https://hrms.yoforex.net');
+const WEB_BASE = process.env.WEB_BASE || runtimeConfig.WEB_BASE || (isDev ? 'http://localhost:3000' : 'https://emptrakr.com');
 const START_EMBEDDED_BACKEND = process.env.START_EMBEDDED_BACKEND === 'true' || runtimeConfig.START_EMBEDDED_BACKEND === true;
 
 function createNoopAutoUpdater() {
@@ -418,6 +418,8 @@ function createWindow() {
             nodeIntegration: false,     // security: no direct Node access in renderer
             contextIsolation: true,     // security: renderer and preload have separate contexts
             preload: path.join(__dirname, 'preload.js'),
+            backgroundThrottling: false, // Prevents timer throttling when minimized/backgrounded
+            devTools: isDev,            // Security: DevTools disabled in production builds
             // In dev the renderer loads from http://localhost:5173, which the production
             // backend's CORS list doesn't include. Disabling webSecurity removes the
             // browser-side CORS check so dev fetches reach the production API.
@@ -428,11 +430,63 @@ function createWindow() {
         show: false, // show only after ready-to-show to avoid white flash
     });
 
+    // In production, block inspection shortcuts (F12, Ctrl+Shift+I, Ctrl+Shift+J, Cmd+Option+I, Cmd+Option+J, Ctrl+U)
+    if (!isDev) {
+        mainWindow.webContents.on('before-input-event', (event, input) => {
+            const isCtrlOrCmd = Boolean(input.control || input.meta);
+            const key = String(input.key || '').toLowerCase();
+
+            // Block F12
+            if (key === 'f12') {
+                event.preventDefault();
+                return;
+            }
+
+            // Block Ctrl+Shift+I / Cmd+Option+I, Ctrl+Shift+J / Cmd+Option+J, Ctrl+Shift+C / Cmd+Option+C
+            if (isCtrlOrCmd && (input.shift || input.alt) && (key === 'i' || key === 'j' || key === 'c')) {
+                event.preventDefault();
+                return;
+            }
+
+            // Block Ctrl+U / Cmd+U (View Source)
+            if (isCtrlOrCmd && key === 'u') {
+                event.preventDefault();
+                return;
+            }
+        });
+    }
+
     const startUrl = isDev
         ? 'http://localhost:5173'
         : `file://${path.join(__dirname, '../dist/index.html')}`;
 
     mainWindow.loadURL(startUrl);
+
+    // Restrict window opening: Deny child BrowserWindow creation; route allowed URLs to system browser
+    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+        if (isAllowedExternalUrl(url)) {
+            shell.openExternal(url).catch((err) => {
+                console.error('[Shell] Failed to open external URL:', err);
+            });
+        } else {
+            console.warn('[Security] Denied opening unapproved external URL:', url);
+        }
+        return { action: 'deny' };
+    });
+
+    // Restrict in-window top-level navigation: Prevent renderer from navigating to external sites
+    mainWindow.webContents.on('will-navigate', (event, navigationUrl) => {
+        try {
+            const parsed = new URL(navigationUrl);
+            if (isDev && parsed.origin === 'http://localhost:5173') return;
+            if (parsed.protocol === 'file:') return;
+        } catch {
+            // Malformed URL
+        }
+        event.preventDefault();
+        console.warn('[Security] Blocked top-level navigation to:', navigationUrl);
+    });
+
     mainWindow.webContents.on('did-finish-load', () => {
         if (!pendingAuthCallbackUrl || !mainWindow || mainWindow.isDestroyed()) return;
         const url = pendingAuthCallbackUrl;
@@ -552,16 +606,20 @@ app.whenReady().then(() => {
     // ── IPC: Dynamic Idle Threshold (NEW — Admin Portal) ─────────────────────
     // Called by the renderer after login with the admin-set value for this user.
     ipcMain.on('set-idle-threshold', (_event, seconds) => {
-        if (typeof seconds === 'number' && seconds >= 10) {
+        // Enforce safe bounds [60s (1m), 3600s (1h)] to prevent evasion
+        if (typeof seconds === 'number' && seconds >= 60 && seconds <= 3600) {
             IDLE_THRESHOLD_SECS = Math.round(seconds);
             console.log(`[Idle] Hardware threshold updated to ${IDLE_THRESHOLD_SECS}s`);
             // Hardware threshold change does NOT restart WFH monitor —
             // screen idle threshold is a separate independent value.
+        } else {
+            console.warn(`[Idle] Rejected out-of-bounds hardware idle threshold: ${seconds}s`);
         }
     });
 
     ipcMain.on('set-wfh-screen-idle-threshold', (_event, seconds) => {
-        if (typeof seconds === 'number' && seconds >= 10) {
+        // Enforce safe bounds [30s, 3600s (1h)]
+        if (typeof seconds === 'number' && seconds >= 30 && seconds <= 3600) {
             const newThreshold = Math.round(seconds);
             const changed = newThreshold !== WFH_SCREEN_IDLE_THRESHOLD_SECS;
             WFH_SCREEN_IDLE_THRESHOLD_SECS = newThreshold;
@@ -574,6 +632,8 @@ app.whenReady().then(() => {
                     () => { console.log('[WFH] Screen became active — poller will re-evaluate'); }
                 );
             }
+        } else {
+            console.warn(`[WFH] Rejected out-of-bounds screen idle threshold: ${seconds}s`);
         }
     });
 
@@ -635,6 +695,49 @@ app.whenReady().then(() => {
         }
     });
 
+    // ── Helper: External URL Security Allowlist ─────────────────────────────
+    function isAllowedExternalUrl(candidateUrl) {
+        if (typeof candidateUrl !== 'string' || !candidateUrl.trim()) return false;
+        try {
+            const parsed = new URL(candidateUrl.trim());
+            // Enforce strict HTTP/HTTPS protocol
+            if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+                return false;
+            }
+
+            // Extract trusted hostnames
+            const webBaseUrl = new URL(WEB_BASE);
+            const allowedHostnames = new Set([
+                webBaseUrl.hostname.toLowerCase(),
+                'hrms.yoforex.net',
+                'emptrakr.com',
+                'www.emptrakr.com',
+            ]);
+
+            if (isDev) {
+                allowedHostnames.add('localhost');
+                allowedHostnames.add('127.0.0.1');
+            }
+
+            const candidateHostname = parsed.hostname.toLowerCase();
+            if (!allowedHostnames.has(candidateHostname)) {
+                console.warn('[Security] Blocked external URL with unapproved hostname:', candidateHostname);
+                return false;
+            }
+
+            // Reject non-standard ports in production
+            if (!isDev && parsed.port && parsed.port !== '443' && parsed.port !== '80') {
+                console.warn('[Security] Blocked external URL with non-standard port:', parsed.port);
+                return false;
+            }
+
+            return true;
+        } catch (err) {
+            console.warn('[Security] Rejected malformed external URL:', err && err.message ? err.message : err);
+            return false;
+        }
+    }
+
     // ── IPC: Open Login in System Browser (Device Flow) ─────────────────────
     // Renderer may send either:
     //   - a one-time deviceCode (legacy), or
@@ -643,6 +746,10 @@ app.whenReady().then(() => {
     ipcMain.on('open-login', (_event, payload) => {
         let loginUrlString;
         if (typeof payload === 'string' && /^https?:\/\//i.test(payload)) {
+            if (!isAllowedExternalUrl(payload)) {
+                console.warn('[Security] Blocked open-login URL outside allowlist:', payload);
+                return;
+            }
             loginUrlString = payload;
         } else {
             const loginUrl = new URL('/login', WEB_BASE);
@@ -650,16 +757,26 @@ app.whenReady().then(() => {
             loginUrl.searchParams.set('returnTo', 'desktop');
             loginUrlString = loginUrl.toString();
         }
-        shell.openExternal(loginUrlString);
-        console.log('[Auth] Opened browser login:', loginUrlString);
+
+        if (isAllowedExternalUrl(loginUrlString)) {
+            shell.openExternal(loginUrlString);
+            console.log('[Auth] Opened browser login:', loginUrlString);
+        } else {
+            console.warn('[Security] Blocked open-login URL outside allowlist:', loginUrlString);
+        }
     });
 
     ipcMain.on('open-dashboard', (_event, payload) => {
         const dashboardUrl = (typeof payload === 'string' && /^https?:\/\//i.test(payload))
             ? payload
             : new URL('/dashboard', WEB_BASE).toString();
-        shell.openExternal(dashboardUrl);
-        console.log('[Auth] Opened browser dashboard:', dashboardUrl);
+
+        if (isAllowedExternalUrl(dashboardUrl)) {
+            shell.openExternal(dashboardUrl);
+            console.log('[Auth] Opened browser dashboard:', dashboardUrl);
+        } else {
+            console.warn('[Security] Blocked open-dashboard URL outside allowlist:', dashboardUrl);
+        }
     });
 
     ipcMain.on('restart-app', () => {
@@ -765,16 +882,17 @@ app.whenReady().then(() => {
     powerMonitor.on('resume', async () => {
         console.log('[Sleep] System resumed from sleep');
 
-        if (!sleepBreakStarted) {
-            console.log('[Sleep] No sleep break was started — nothing to end');
-            return;
+        let ok = false;
+        if (sleepBreakStarted) {
+            sleepBreakStarted = false;
+            const result = await sendBreakCommand('end', 'sleep', 'resume');
+            ok = !!result;
+        } else {
+            console.log('[Sleep] No sleep break was tracked — re-syncing status from backend');
         }
 
-        sleepBreakStarted = false;
-        const result = await sendBreakCommand('end', 'sleep', 'resume');
-        const ok = !!result;
-
-        // Tell renderer to re-sync status from backend
+        // Always tell renderer to re-sync status from backend to recover
+        // from any orphaned break state (e.g., break started via a different path)
         if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('sleep-break-ended', ok);
         }

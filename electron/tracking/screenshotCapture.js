@@ -5,13 +5,12 @@ const PS_CAPTURE_SCRIPT = `
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-$cursorPoint = [System.Windows.Forms.Cursor]::Position
-$screen = [System.Windows.Forms.Screen]::FromPoint($cursorPoint)
-$bounds = $screen.Bounds
+# Capture full multi-monitor virtual screen bounding all displays
+$bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
 
 $bitmap = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-$graphics.CopyFromScreen($bounds.X, $bounds.Y, 0, 0, $bounds.Size)
+$graphics.CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bounds.Size)
 
 $tmpFile = [System.IO.Path]::GetTempFileName()
 $pngPath = [System.IO.Path]::ChangeExtension($tmpFile, 'png')
@@ -25,8 +24,8 @@ $bitmap.Dispose()
     path = $pngPath
     width = $bounds.Width
     height = $bounds.Height
-    x = $bounds.X
-    y = $bounds.Y
+    x = $bounds.Left
+    y = $bounds.Top
 } | ConvertTo-Json -Compress
 `;
 

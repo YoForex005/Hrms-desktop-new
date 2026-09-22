@@ -46,7 +46,7 @@ let THUMB_H = 90;
 let _timer          = null;
 let _screenIdle     = false;
 let _screenIdleAt   = null;   // Date when screen first went idle
-let _lastBitmap     = null;   // previous frame bitmap buffer for diff comparison
+let _lastBitmaps    = new Map(); // sourceId -> previous frame bitmap buffer
 let _staticCount    = 0;      // consecutive "unchanged" frames
 let _framesForIdle  = 4;      // frames needed to declare screen idle
 let _onScreenIdle   = null;
@@ -90,47 +90,64 @@ async function captureAndCheck() {
 
         if (!sources || sources.length === 0) return;
 
-        const bitmap = sources[0].thumbnail.toBitmap();
+        let anyScreenChanged = false;
+        let maxDiffFraction = 0;
+        let comparedCount = 0;
 
-        if (_lastBitmap !== null) {
-            const diffFraction  = pixelDiffFraction(bitmap, _lastBitmap);
-            const screenChanged = diffFraction > CHANGE_FRACTION_THRESHOLD;
+        for (const source of sources) {
+            const bitmap = source.thumbnail.toBitmap();
+            const prev = _lastBitmaps.get(source.id);
 
-            // Per-frame debug: shows diff % and frame count every capture so you
-            // can see what's causing the screen to be detected as changed.
+            if (prev) {
+                // Resolution change: bitmap sizes differ. Reset baseline instead
+                // of permanently returning diff=1 which blocks idle detection.
+                if (bitmap.length !== prev.length) {
+                    _lastBitmaps.clear();
+                    _lastBitmaps.set(source.id, bitmap);
+                    continue;
+                }
+                const diffFraction = pixelDiffFraction(bitmap, prev);
+                comparedCount++;
+                if (diffFraction > maxDiffFraction) {
+                    maxDiffFraction = diffFraction;
+                }
+                if (diffFraction > CHANGE_FRACTION_THRESHOLD) {
+                    anyScreenChanged = true;
+                }
+            }
+
+            _lastBitmaps.set(source.id, bitmap);
+        }
+
+        if (comparedCount > 0) {
             console.log(
-                `[WFH Monitor] frame diff=${(diffFraction * 100).toFixed(2)}%` +
+                `[WFH Monitor] max screen diff=${(maxDiffFraction * 100).toFixed(2)}%` +
+                ` across ${comparedCount} screen(s)` +
                 ` threshold=${(CHANGE_FRACTION_THRESHOLD * 100).toFixed(0)}%` +
-                ` → ${screenChanged ? 'CHANGED (reset)' : `static [${_staticCount + 1}/${_framesForIdle}]`}`
+                ` → ${anyScreenChanged ? 'CHANGED (reset)' : `static [${_staticCount + 1}/${_framesForIdle}]`}`
             );
 
-            if (!screenChanged) {
-                
+            if (!anyScreenChanged) {
                 _staticCount++;
                 if (!_screenIdle && _staticCount >= _framesForIdle) {
                     _screenIdle   = true;
                     _screenIdleAt = new Date();
                     console.log(
                         `[WFH Monitor] Screen idle after ${_staticCount} static frames` +
-                        ` (last diff ${(diffFraction * 100).toFixed(2)}%)`
+                        ` (last max diff ${(maxDiffFraction * 100).toFixed(2)}%)`
                     );
                     if (_onScreenIdle) _onScreenIdle();
                 }
             } else {
-               
                 _staticCount = 0;
                 if (_screenIdle) {
                     _screenIdle   = false;
                     _screenIdleAt = null;
-                    console.log(`[WFH Monitor] Screen active again (diff ${(diffFraction * 100).toFixed(2)}%)`);
+                    console.log(`[WFH Monitor] Screen active again (diff ${(maxDiffFraction * 100).toFixed(2)}%)`);
                     if (_onScreenActive) _onScreenActive();
                 }
             }
         }
-
-        // Always update reference to the latest frame
-        _lastBitmap = bitmap;
-
     } catch (err) {
         // desktopCapturer fails when no display is attached (headless / RDP edge case)
         console.warn('[WFH Monitor] Capture failed:', err.message);
@@ -161,7 +178,7 @@ function start(screenIdleThresholdSecs, config, onScreenIdle, onScreenActive) {
     _onScreenActive = onScreenActive;
     _screenIdle     = false;
     _screenIdleAt   = null;
-    _lastBitmap     = null;
+    _lastBitmaps.clear();
     _staticCount    = 0;
 
     _timer = setInterval(captureAndCheck, CAPTURE_INTERVAL_MS);
@@ -180,7 +197,7 @@ function stop() {
     }
     _screenIdle   = false;
     _screenIdleAt = null;
-    _lastBitmap   = null;
+    _lastBitmaps.clear();
     _staticCount  = 0;
     if (_onScreenIdle) console.log('[WFH Monitor] Stopped');
     _onScreenIdle   = null;

@@ -32,7 +32,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
+          VITE_API_BASE: https://hrmsbackend.yoforex.net/api
+          VITE_WEB_BASE: https://emptrakr.com
+          API_BASE: https://hrmsbackend.yoforex.net/api
+          WEB_BASE: https://emptrakr.com
         run: |
+          node scripts/write-electron-config.cjs
           npm run build
           npx electron-builder --mac --x64 --arm64 -p always
 
@@ -41,8 +46,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
+          VITE_API_BASE: https://hrmsbackend.yoforex.net/api
+          VITE_WEB_BASE: https://emptrakr.com
+          API_BASE: https://hrmsbackend.yoforex.net/api
+          WEB_BASE: https://emptrakr.com
         run: |
+          node scripts/write-electron-config.cjs
           npm run build
-          node scripts/write-electron-config.cjs || true
           npx electron-builder --win -p always
 

@@ -23,8 +23,15 @@ export class SessionExpiredError extends Error {
  * - 401 → clears localStorage, fires 'wf:session-expired', throws SessionExpiredError
  * - Other errors → throws with the server's error message
  */
+async function parseJson(res: Response) {
+    const ct = res.headers.get('content-type') ?? '';
+    if (!ct.includes('application/json')) {
+        throw new Error(`Server returned ${res.status} (non-JSON response)`);
+    }
+    return res.json();
+}
+
 async function handleResponse(res: Response) {
-    const data = await res.json();
     if (res.status === 401) {
         localStorage.removeItem('wf_token');
         localStorage.removeItem('wf_user');
@@ -32,6 +39,7 @@ async function handleResponse(res: Response) {
         window.dispatchEvent(new Event('wf:session-expired'));
         throw new SessionExpiredError();
     }
+    const data = await parseJson(res);
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     return data;
 }
@@ -54,7 +62,7 @@ export async function login(email: string, password: string) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
     });
-    const data = await res.json();
+    const data = await parseJson(res);
     if (!res.ok) throw new Error(data.error || 'Login failed');
 
     // NOTE: idleThresholdSecs is now returned by the backend (set by admin per user).
@@ -200,7 +208,7 @@ export async function startIdleSession(startTime: string) {
         body: JSON.stringify({ startTime }),
     });
     // 409 = idle session already open — not a client error
-    if (res.status === 409) return res.json();
+    if (res.status === 409) return parseJson(res);
     return handleResponse(res);
 }
 
