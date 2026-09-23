@@ -16,7 +16,7 @@ const runtimeConfig = loadRuntimeConfig();
 const TRACKING_INTERVAL_MS = 5000;
 const SYNC_INTERVAL_MS = 5000;  // sync every tracker poll (5s) for near-real-time admin view
 
-const API_BASE = process.env.API_BASE || runtimeConfig.API_BASE || 'https://hrmsbackend.yoforex.net/api';
+const API_BASE = process.env.API_BASE || runtimeConfig.API_BASE || 'https://api.emptrakr.com/api';
 
 const EXCLUDED_PROCESSES = [
     // Core Windows kernel / session daemons — never user visible

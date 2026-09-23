@@ -498,7 +498,15 @@ export default function Dashboard({ view, user, onLogout }: DashboardProps) {
                     <div style={{ display: 'flex', justifyContent: 'center', gap: 16, marginTop: 16 }}>
                         <button
                             className="btn"
-                            onClick={() => (window.electronAPI as any)?.openDashboard?.(`${WEB_BASE.replace(/\/+$/, '')}/dashboard`)}
+                            onClick={() => {
+                                const url = `${WEB_BASE.replace(/\/+$/, '')}/dashboard`;
+                                const electronAPI = (window as any).electronAPI;
+                                if (electronAPI?.openDashboard) {
+                                    electronAPI.openDashboard(url);
+                                } else {
+                                    window.open(url, '_blank');
+                                }
+                            }}
                             style={{ flex: 1, padding: '10px', fontSize: 13, background: 'transparent', border: '1px solid #e2e8f0', color: '#64748b', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}
                         >
 

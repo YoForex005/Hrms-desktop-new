@@ -11,7 +11,7 @@ function readRuntimeConfig() {
 }
 
 const runtimeConfig = readRuntimeConfig();
-const API_BASE = process.env.API_BASE || runtimeConfig.API_BASE || 'https://hrmsbackend.yoforex.net/api';
+const API_BASE = process.env.API_BASE || runtimeConfig.API_BASE || 'https://api.emptrakr.com/api';
 
 function getDefaultDeviceId() {
     let username = 'unknown-user';
