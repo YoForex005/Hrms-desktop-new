@@ -1,3 +1,4 @@
+const { desktopCapturer, screen } = require('electron');
 const { execFile } = require('child_process');
 const { readFile, unlink } = require('fs/promises');
 
@@ -46,37 +47,73 @@ function executePowerShell(script) {
     });
 }
 
+/**
+ * Captures screenshot directly into an in-memory Buffer using Electron's native
+ * desktopCapturer API (DirectX / ScreenCaptureKit). This eliminates spawning external
+ * PowerShell processes, prevents antivirus/EDR flags, and avoids writing sensitive
+ * unencrypted image files to the OS temporary directory.
+ */
 async function captureCurrentMonitorPng() {
+    // ── 1. Native In-Memory Capture via Electron desktopCapturer ─────────────
+    try {
+        if (desktopCapturer) {
+            const primaryDisplay = screen ? screen.getPrimaryDisplay() : null;
+            const bounds = primaryDisplay ? primaryDisplay.bounds : { width: 1920, height: 1080 };
+            const sources = await desktopCapturer.getSources({
+                types: ['screen'],
+                thumbnailSize: {
+                    width: bounds.width || 1920,
+                    height: bounds.height || 1080,
+                },
+            });
+
+            if (sources && sources.length > 0) {
+                // Select primary display or first available monitor
+                const source = sources.find(s => s.id.startsWith('screen:0')) || sources[0];
+                const imageBuffer = source.thumbnail.toPNG();
+                const size = source.thumbnail.getSize();
+
+                if (imageBuffer && imageBuffer.length > 0) {
+                    return {
+                        imageBuffer,
+                        display: {
+                            width: size.width || bounds.width || 0,
+                            height: size.height || bounds.height || 0,
+                            x: bounds.x || 0,
+                            y: bounds.y || 0,
+                        },
+                    };
+                }
+            }
+        }
+    } catch (nativeErr) {
+        console.warn('[ScreenshotCapture] Native desktopCapturer failed, trying OS fallback:', nativeErr?.message);
+    }
+
+    // ── 2. Fallbacks (macOS screencapture / Windows PowerShell) ───────────────
     if (process.platform === 'darwin') {
-        const { execFile } = require('child_process');
+        const { execFile: execFileMac } = require('child_process');
         const path = require('path');
         const os = require('os');
         const fs = require('fs/promises');
-        
+
         const timestamp = Date.now();
         const tmpPath = path.join(os.tmpdir(), `wf_shot_${timestamp}.png`);
-        
+
         return new Promise((resolve, reject) => {
-            // -x = silent, -C = cursor, -m = main monitor ONLY (prevents filename ' 1' multi-monitor bug)
-            execFile('screencapture', ['-x', '-C', '-m', tmpPath], async (err, stdout, stderr) => {
+            execFileMac('screencapture', ['-x', '-C', '-m', tmpPath], async (err, _stdout, stderr) => {
                 if (err) {
                     return reject(new Error('macOS screenshot failed: ' + (stderr || err.message)));
                 }
                 try {
-                    // Give it a solid 500ms for macOS to finish physically writing to the SSD
-                    await new Promise(r => setTimeout(r, 500));
+                    await new Promise(r => setTimeout(r, 400));
                     let imageBuffer;
                     try {
                         imageBuffer = await fs.readFile(tmpPath);
                     } catch (readErr) {
-                        // Multi-monitor fallback just in case -m failed to stop numbering on older macOS
-                        try {
-                            const fallbackPath = path.join(os.tmpdir(), `wf_shot_${timestamp} 1.png`);
-                            imageBuffer = await fs.readFile(fallbackPath);
-                            await fs.unlink(fallbackPath).catch(() => {});
-                        } catch (fallbackErr) {
-                            throw readErr; // throw original
-                        }
+                        const fallbackPath = path.join(os.tmpdir(), `wf_shot_${timestamp} 1.png`);
+                        imageBuffer = await fs.readFile(fallbackPath);
+                        await fs.unlink(fallbackPath).catch(() => {});
                     }
                     await fs.unlink(tmpPath).catch(() => {});
                     resolve({
@@ -126,4 +163,3 @@ async function captureCurrentMonitorPng() {
 module.exports = {
     captureCurrentMonitorPng,
 };
-

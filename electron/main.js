@@ -606,20 +606,18 @@ app.whenReady().then(() => {
     // ── IPC: Dynamic Idle Threshold (NEW — Admin Portal) ─────────────────────
     // Called by the renderer after login with the admin-set value for this user.
     ipcMain.on('set-idle-threshold', (_event, seconds) => {
-        // Enforce safe bounds [60s (1m), 3600s (1h)] to prevent evasion
-        if (typeof seconds === 'number' && seconds >= 60 && seconds <= 3600) {
+        // Enforce safe bounds [30s, 600s (10m)] to prevent evasion
+        if (typeof seconds === 'number' && seconds >= 30 && seconds <= 600) {
             IDLE_THRESHOLD_SECS = Math.round(seconds);
             console.log(`[Idle] Hardware threshold updated to ${IDLE_THRESHOLD_SECS}s`);
-            // Hardware threshold change does NOT restart WFH monitor —
-            // screen idle threshold is a separate independent value.
         } else {
             console.warn(`[Idle] Rejected out-of-bounds hardware idle threshold: ${seconds}s`);
         }
     });
 
     ipcMain.on('set-wfh-screen-idle-threshold', (_event, seconds) => {
-        // Enforce safe bounds [30s, 3600s (1h)]
-        if (typeof seconds === 'number' && seconds >= 30 && seconds <= 3600) {
+        // Enforce safe bounds [30s, 600s (10m)]
+        if (typeof seconds === 'number' && seconds >= 30 && seconds <= 600) {
             const newThreshold = Math.round(seconds);
             const changed = newThreshold !== WFH_SCREEN_IDLE_THRESHOLD_SECS;
             WFH_SCREEN_IDLE_THRESHOLD_SECS = newThreshold;
@@ -638,10 +636,14 @@ app.whenReady().then(() => {
     });
 
     ipcMain.on('set-screenshot-interval', (_event, seconds) => {
-        if (typeof seconds === 'number' && seconds >= 60 && seconds <= 3600) {
+        // Enforce safe bounds [60s (1m), 900s (15m)]
+        if (typeof seconds === 'number' && seconds >= 60 && seconds <= 900) {
             screenshotScheduler.setIntervalSecs(Math.round(seconds));
+        } else {
+            console.warn(`[Screenshot] Rejected out-of-bounds interval: ${seconds}s`);
         }
     });
+
 
     ipcMain.on('set-wfh-config', (_event, config) => {
         if (config && typeof config === 'object') {
