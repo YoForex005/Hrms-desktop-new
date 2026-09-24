@@ -33,7 +33,7 @@ async function parseJson(res: Response) {
 
 async function handleResponse(res: Response) {
     if (res.status === 401) {
-        localStorage.removeItem('wf_token');
+        setAuthToken(null);
         localStorage.removeItem('wf_user');
         localStorage.removeItem('wf_idle_threshold');
         window.dispatchEvent(new Event('wf:session-expired'));
@@ -44,8 +44,56 @@ async function handleResponse(res: Response) {
     return data;
 }
 
-function getToken(): string | null {
-    return localStorage.getItem('wf_token');
+let memoryToken: string | null = null;
+
+function hasElectronStorage(): boolean {
+    return typeof window !== 'undefined' && Boolean((window as any).electronAPI?.secureStoreToken);
+}
+
+export function setAuthToken(token: string | null) {
+    memoryToken = token;
+    const isElectron = hasElectronStorage();
+    if (token) {
+        if (isElectron) {
+            // Keep strictly in volatile memory and OS DPAPI store; clear any legacy localStorage key
+            localStorage.removeItem('wf_token');
+            (window as any).electronAPI.secureStoreToken(token).catch(() => {});
+        } else {
+            localStorage.setItem('wf_token', token);
+        }
+    } else {
+        localStorage.removeItem('wf_token');
+        if (isElectron) {
+            (window as any).electronAPI.secureClearToken().catch(() => {});
+        }
+    }
+}
+
+export function getToken(): string | null {
+    if (memoryToken) return memoryToken;
+    if (!hasElectronStorage()) {
+        const stored = localStorage.getItem('wf_token');
+        if (stored) {
+            memoryToken = stored;
+            return stored;
+        }
+    }
+    return null;
+}
+
+export async function syncSecureToken(): Promise<string | null> {
+    if (typeof window !== 'undefined' && (window as any).electronAPI?.secureGetToken) {
+        try {
+            const secureToken = await (window as any).electronAPI.secureGetToken();
+            if (secureToken) {
+                setAuthToken(secureToken);
+                return secureToken;
+            }
+        } catch {
+            // Fall back to localStorage
+        }
+    }
+    return getToken();
 }
 
 function authHeaders() {

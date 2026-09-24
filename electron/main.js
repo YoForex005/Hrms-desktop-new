@@ -17,10 +17,11 @@
 
 process.noDeprecation = true; // Hides non-critical node warnings (like url.parse)
 
-const { app, BrowserWindow, ipcMain, powerMonitor, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, powerMonitor, shell, safeStorage } = require('electron');
 let autoUpdater = null;
 const axios = require('axios');
 const path = require('path');
+const fs = require('fs');
 const { spawn } = require('child_process');
 const tracker = require('./tracking/tracker');
 const screenshotScheduler = require('./tracking/screenshotScheduler');
@@ -591,6 +592,67 @@ app.whenReady().then(() => {
         screenshotScheduler.clearAuthToken();
         sessionAuthToken = null;
         disconnectIntentSent = false;
+    });
+
+    let inMemoryTokenFallback = null;
+
+    // ── IPC: Secure Token Storage (safeStorage / DPAPI) ──────────────────────
+    ipcMain.handle('secure-store-token', async (_event, token) => {
+        try {
+            const tokenPath = path.join(app.getPath('userData'), 'auth.enc');
+            if (!token || typeof token !== 'string') {
+                inMemoryTokenFallback = null;
+                if (fs.existsSync(tokenPath)) {
+                    fs.unlinkSync(tokenPath);
+                }
+                return { ok: true };
+            }
+            if (safeStorage && safeStorage.isEncryptionAvailable()) {
+                const encrypted = safeStorage.encryptString(token);
+                fs.writeFileSync(tokenPath, encrypted);
+                inMemoryTokenFallback = null;
+                return { ok: true, encrypted: true };
+            } else {
+                // Security: If OS-level encryption is unavailable, never write unencrypted tokens to disk.
+                // Keep token strictly in volatile process memory for this session only.
+                inMemoryTokenFallback = token;
+                if (fs.existsSync(tokenPath)) {
+                    fs.unlinkSync(tokenPath);
+                }
+                return { ok: true, encrypted: false, memoryOnly: true };
+            }
+        } catch (err) {
+            console.error('[SecureStorage] Failed to store token:', err);
+            return { ok: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle('secure-get-token', async () => {
+        try {
+            const tokenPath = path.join(app.getPath('userData'), 'auth.enc');
+            if (safeStorage && safeStorage.isEncryptionAvailable()) {
+                if (!fs.existsSync(tokenPath)) return null;
+                const data = fs.readFileSync(tokenPath);
+                return safeStorage.decryptString(data);
+            }
+            return inMemoryTokenFallback;
+        } catch (err) {
+            console.error('[SecureStorage] Failed to retrieve token:', err);
+            return null;
+        }
+    });
+
+    ipcMain.handle('secure-clear-token', async () => {
+        try {
+            inMemoryTokenFallback = null;
+            const tokenPath = path.join(app.getPath('userData'), 'auth.enc');
+            if (fs.existsSync(tokenPath)) {
+                fs.unlinkSync(tokenPath);
+            }
+            return { ok: true };
+        } catch (err) {
+            return { ok: false, error: err.message };
+        }
     });
 
     // ── IPC: Shift Status Sync ────────────────────────────────────────────────

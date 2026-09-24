@@ -3,7 +3,7 @@ import './index.css';
 import LoginPage from './pages/LoginPage';
 import Dashboard from './pages/Dashboard';
 import Titlebar from './components/Titlebar';
-import { getMe } from './api';
+import { getMe, setAuthToken, syncSecureToken, getToken } from './api';
 import type { CompanyBrandChangedDetail } from './api';
 import type { User } from './types';
 
@@ -34,10 +34,14 @@ function getSavedUser(): User | null {
 }
 
 function App() {
-    const savedToken = localStorage.getItem('wf_token');
-
     const [user, setUser] = useState<User | null>(getSavedUser());
-    const [token, setToken] = useState<string | null>(savedToken);
+    const [token, setToken] = useState<string | null>(() => getToken());
+
+    useEffect(() => {
+        syncSecureToken().then((t) => {
+            if (t) setToken(t);
+        });
+    }, []);
     const [version, setVersion] = useState<string>('');
     const [otaStatus, setOtaStatus] = useState<string>('');
     const [readyVersion, setReadyVersion] = useState<string>('');
@@ -184,7 +188,7 @@ function App() {
     };
 
     const handleLogout = () => {
-        localStorage.removeItem('wf_token');
+        setAuthToken(null);
         localStorage.removeItem('wf_user');
         setUser(null);
         setToken(null);

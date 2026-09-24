@@ -1,6 +1,5 @@
 const { desktopCapturer, screen } = require('electron');
 const { execFile } = require('child_process');
-const { readFile, unlink } = require('fs/promises');
 
 const PS_CAPTURE_SCRIPT = `
 Add-Type -AssemblyName System.Windows.Forms
@@ -13,16 +12,15 @@ $bitmap = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
 $graphics.CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bounds.Size)
 
-$tmpFile = [System.IO.Path]::GetTempFileName()
-$pngPath = [System.IO.Path]::ChangeExtension($tmpFile, 'png')
-if (Test-Path $tmpFile) { Remove-Item $tmpFile -Force }
-
-$bitmap.Save($pngPath, [System.Drawing.Imaging.ImageFormat]::Png)
+$ms = New-Object System.IO.MemoryStream
+$bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+$base64 = [System.Convert]::ToBase64String($ms.ToArray())
+$ms.Dispose()
 $graphics.Dispose()
 $bitmap.Dispose()
 
 [PSCustomObject]@{
-    path = $pngPath
+    base64 = $base64
     width = $bounds.Width
     height = $bounds.Height
     x = $bounds.Left
@@ -35,7 +33,7 @@ function executePowerShell(script) {
         execFile(
             'powershell.exe',
             ['-NoProfile', '-NonInteractive', '-STA', '-Command', script],
-            { timeout: 15000, windowsHide: true, maxBuffer: 1024 * 1024 * 8 },
+            { timeout: 15000, windowsHide: true, maxBuffer: 1024 * 1024 * 32 },
             (err, stdout, stderr) => {
                 if (err) {
                     reject(new Error(stderr && String(stderr).trim() ? String(stderr).trim() : err.message));
@@ -139,25 +137,21 @@ async function captureCurrentMonitorPng() {
         throw new Error(`Screenshot metadata parse failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
 
-    const filePath = parsed?.path;
-    if (!filePath || typeof filePath !== 'string') {
-        throw new Error('Screenshot capture metadata missing output path');
+    const base64Data = parsed?.base64;
+    if (!base64Data || typeof base64Data !== 'string') {
+        throw new Error('Screenshot capture metadata missing image payload');
     }
 
-    try {
-        const imageBuffer = await readFile(filePath);
-        return {
-            imageBuffer,
-            display: {
-                width: Number(parsed.width) || 0,
-                height: Number(parsed.height) || 0,
-                x: Number(parsed.x) || 0,
-                y: Number(parsed.y) || 0,
-            },
-        };
-    } finally {
-        await unlink(filePath).catch(() => {});
-    }
+    const imageBuffer = Buffer.from(base64Data, 'base64');
+    return {
+        imageBuffer,
+        display: {
+            width: Number(parsed.width) || 0,
+            height: Number(parsed.height) || 0,
+            x: Number(parsed.x) || 0,
+            y: Number(parsed.y) || 0,
+        },
+    };
 }
 
 module.exports = {

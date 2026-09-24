@@ -17,6 +17,7 @@ interface LoginPageProps {
 }
 
 import { API_BASE, WEB_BASE } from '../config';
+import { setAuthToken } from '../api';
 
 interface DesktopSessionPayload extends User {
     token: string;
@@ -44,7 +45,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
             sessionConsumedRef.current = true;
             clearPolling();
 
-            localStorage.setItem('wf_token', data.token);
+            setAuthToken(data.token);
             const user: User = {
                 id: data.id,
                 name: data.name,
