@@ -1,6 +1,19 @@
 import { API_BASE } from './config';
 import type { User } from './types';
 
+
+export async function apiRequest(path: string, options: RequestInit = {}): Promise<Response> {
+    const bridge = window.electronAPI?.requestApi;
+    if (!bridge) return fetch(API_BASE + path, { ...options, signal: options.signal || AbortSignal.timeout(15000) });
+    const response = await bridge({ path, method: options.method || 'GET', body: options.body, headers: Object.fromEntries(new Headers(options.headers).entries()) });
+    return new Response(response.body, { status: response.status, headers: response.headers });
+}
+export async function logoutSession() {
+    const response = await apiRequest('/auth/logout', { method: 'POST', headers: authHeaders() });
+    await handleResponse(response);
+    setAuthToken(null);
+}
+
 export type CompanyBrandChangedDetail = {
     companyName: string;
     companyLogoUrl: string | null;
@@ -47,7 +60,7 @@ async function handleResponse(res: Response) {
 let memoryToken: string | null = null;
 
 function hasElectronStorage(): boolean {
-    return typeof window !== 'undefined' && Boolean((window as any).electronAPI?.secureStoreToken);
+    return typeof window !== 'undefined' && Boolean(window.electronAPI?.secureStoreToken);
 }
 
 export function setAuthToken(token: string | null) {
@@ -57,14 +70,14 @@ export function setAuthToken(token: string | null) {
         if (isElectron) {
             // Keep strictly in volatile memory and OS DPAPI store; clear any legacy localStorage key
             localStorage.removeItem('wf_token');
-            (window as any).electronAPI.secureStoreToken(token).catch(() => {});
+            window.electronAPI?.secureStoreToken(token).catch(() => {});
         } else {
             localStorage.setItem('wf_token', token);
         }
     } else {
         localStorage.removeItem('wf_token');
         if (isElectron) {
-            (window as any).electronAPI.secureClearToken().catch(() => {});
+            window.electronAPI?.secureClearToken().catch(() => {});
         }
     }
 }
@@ -82,9 +95,9 @@ export function getToken(): string | null {
 }
 
 export async function syncSecureToken(): Promise<string | null> {
-    if (typeof window !== 'undefined' && (window as any).electronAPI?.secureGetToken) {
+    if (typeof window !== 'undefined' && window.electronAPI?.secureGetToken) {
         try {
-            const secureToken = await (window as any).electronAPI.secureGetToken();
+            const secureToken = await window.electronAPI.secureGetToken();
             if (secureToken) {
                 setAuthToken(secureToken);
                 return secureToken;
@@ -105,40 +118,46 @@ function authHeaders() {
 
 
 export async function login(email: string, password: string) {
-    const res = await fetch(`${API_BASE}/auth/login`, {
+    const res = await apiRequest(`/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, desktop: true }),
     });
     const data = await parseJson(res);
     if (!res.ok) throw new Error(data.error || 'Login failed');
 
     // NOTE: idleThresholdSecs is now returned by the backend (set by admin per user).
     // We persist it to localStorage so useAppTracker.ts can read it on every poll.
-    if (data.user?.idleThresholdSecs !== undefined) {
-        localStorage.setItem('wf_idle_threshold', String(data.user.idleThresholdSecs));
-    }
+
 
     return data as { token: string; user: User & { idleThresholdSecs: number } };
 }
 
 export async function getMe(): Promise<User> {
-    const res = await fetch(`${API_BASE}/auth/me`, { headers: authHeaders() });
+    const res = await apiRequest(`/auth/me`, { headers: authHeaders() });
     const data = await handleResponse(res) as { user: User & { idleThresholdSecs?: number } };
 
-    if (data.user?.idleThresholdSecs !== undefined) {
-        localStorage.setItem('wf_idle_threshold', String(data.user.idleThresholdSecs));
-    }
+
 
     return data.user;
 }
 
 export async function getStatus() {
-    const res = await fetch(`${API_BASE}/time/status`, { headers: authHeaders() });
+    const res = await apiRequest(`/time/status`, { headers: authHeaders() });
     const data = await handleResponse(res);
     return data as {
+        timezone?: string;
         status: 'stopped' | 'working' | 'on_break';
         shift: unknown;
+        serverNow?: string;
+        trackingLease?: { supported: boolean; serverNow: string; onlineUntil: string | null };
+        timer?: {
+            elapsedSecs: number;
+            breakSecs: number;
+            workSecs: number;
+            idleSecs: number;
+            activeSecs: number;
+        };
         idleThresholdSecs: number;
         expectedWorkSecs: number;
         expectedActiveSecs: number;
@@ -152,7 +171,7 @@ export async function getStatus() {
 }
 
 export async function startShift(workLocation: 'wfh' | 'office') {
-    const res = await fetch(`${API_BASE}/time/start`, {
+    const res = await apiRequest(`/time/start`, {
         method: 'POST',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ work_location: workLocation }),
@@ -161,14 +180,14 @@ export async function startShift(workLocation: 'wfh' | 'office') {
 }
 
 export async function toggleBreak() {
-    const res = await fetch(`${API_BASE}/time/break`, { method: 'POST', headers: authHeaders() });
+    const res = await apiRequest(`/time/break`, { method: 'POST', headers: authHeaders() });
     return handleResponse(res);
 }
 
 export type BreakSource = 'manual' | 'screen_lock' | 'sleep';
 
 export async function startBreak(source: BreakSource = 'manual') {
-    const res = await fetch(`${API_BASE}/time/break/start`, {
+    const res = await apiRequest(`/time/break/start`, {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({ source }),
@@ -181,7 +200,7 @@ export async function startBreak(source: BreakSource = 'manual') {
 }
 
 export async function endBreak(options: { source?: BreakSource; breakId?: string } = {}) {
-    const res = await fetch(`${API_BASE}/time/break/end`, {
+    const res = await apiRequest(`/time/break/end`, {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify(options),
@@ -196,7 +215,7 @@ export async function endBreak(options: { source?: BreakSource; breakId?: string
 
 export async function stopShift(reason?: string, endTime?: string) {
     const hasPayload = !!reason || !!endTime;
-    const res = await fetch(`${API_BASE}/time/stop`, {
+    const res = await apiRequest(`/time/stop`, {
         method: 'POST',
         headers: authHeaders(),
         body: hasPayload ? JSON.stringify({ reason, endTime }) : undefined,
@@ -205,7 +224,7 @@ export async function stopShift(reason?: string, endTime?: string) {
 }
 
 export async function rolloverShift() {
-    const res = await fetch(`${API_BASE}/time/rollover`, {
+    const res = await apiRequest(`/time/rollover`, {
         method: 'POST',
         headers: authHeaders(),
     });
@@ -219,12 +238,12 @@ export async function rolloverShift() {
 }
 
 export async function sendHeartbeat() {
-    const res = await fetch(`${API_BASE}/time/heartbeat`, { method: 'POST', headers: authHeaders() });
+    const res = await apiRequest(`/time/heartbeat`, { method: 'POST', headers: authHeaders() });
     return handleResponse(res);
 }
 
 export async function getHistory() {
-    const res = await fetch(`${API_BASE}/time/history`, { headers: authHeaders() });
+    const res = await apiRequest(`/time/history`, { headers: authHeaders() });
     const data = await handleResponse(res);
     return data.shifts as Array<{
         id: string;
@@ -250,7 +269,7 @@ export async function getHistory() {
  *                    (i.e., 60 seconds before this call is made).
  */
 export async function startIdleSession(startTime: string) {
-    const res = await fetch(`${API_BASE}/time/idle/start`, {
+    const res = await apiRequest(`/time/idle/start`, {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({ startTime }),
@@ -261,65 +280,26 @@ export async function startIdleSession(startTime: string) {
 }
 
 export async function endIdleSession() {
-    const res = await fetch(`${API_BASE}/time/idle/end`, { method: 'POST', headers: authHeaders() });
+    const res = await apiRequest(`/time/idle/end`, { method: 'POST', headers: authHeaders() });
     return handleResponse(res);
 }
 
 export async function getTodayIdleSecs(): Promise<number> {
-    const res = await fetch(`${API_BASE}/time/idle/today`, { headers: authHeaders() });
+    const res = await apiRequest(`/time/idle/today`, { headers: authHeaders() });
     const data = await handleResponse(res);
     return (data as { totalIdleSecs: number }).totalIdleSecs;
 }
 
 
-/**
- * Open a Server-Sent Events connection to receive real-time threshold changes.
- *
- * The backend pushes an `idle-threshold-changed` event every time an admin
- * saves a new idleThresholdSecs for this user — arrives in milliseconds.
- *
- * EventSource does NOT support custom Authorization headers, so we pass the
- * token as a query param. The backend auth middleware already accepts this.
- * EventSource auto-reconnects on network drops.
- *
- * @param onThresholdChange  Called with the new threshold (seconds) on change
- * @returns                  Cleanup function — call on component unmount
- */
+// Settings refresh through the authenticated main-process API bridge.
 export function subscribeToThresholdEvents(
     onThresholdChange: (secs: number) => void
 ): () => void {
     const token = getToken();
     if (!token) return () => { }; // not logged in
 
-    const url = `${API_BASE}/time/events?token=${encodeURIComponent(token)}`;
-    const source = new EventSource(url);
-
-    source.addEventListener('idle-threshold-changed', (e: MessageEvent) => {
-        try {
-            const { idleThresholdSecs } = JSON.parse(e.data) as { idleThresholdSecs: number };
-            if (typeof idleThresholdSecs === 'number') {
-                onThresholdChange(idleThresholdSecs);
-            }
-        } catch { /* malformed event — ignore */ }
-    });
-
-    source.addEventListener('company-brand-changed', (e: MessageEvent) => {
-        try {
-            const payload = JSON.parse(e.data) as Partial<CompanyBrandChangedDetail>;
-            if (typeof payload.companyName !== 'string') return;
-
-            window.dispatchEvent(new CustomEvent<CompanyBrandChangedDetail>('wf:company-brand-changed', {
-                detail: {
-                    companyName: payload.companyName,
-                    companyLogoUrl: typeof payload.companyLogoUrl === 'string' ? payload.companyLogoUrl : null,
-                },
-            }));
-        } catch { /* malformed event - ignore */ }
-    });
-
-    source.onerror = () => {
-        // EventSource will auto-reconnect; no action needed
-    };
-
-    return () => source.close();
+    // Settings use the existing bounded status poll; tokens never enter URLs.
+    void token;
+    const timer = setInterval(() => { void getStatus().then(data => onThresholdChange(data.idleThresholdSecs)).catch(() => {}); }, 30000);
+    return () => clearInterval(timer);
 }

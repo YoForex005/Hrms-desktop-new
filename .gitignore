@@ -65,3 +65,6 @@ Desktop.ini
 *.temp
 *.bak
 *.orig
+
+# Isolated audit runtimes and staging tools
+.audit-runtime/

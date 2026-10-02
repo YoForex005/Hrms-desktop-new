@@ -1,3 +1,4 @@
+import { getDateKeyInTimeZone, getUtcDayBounds } from '../timezones';
 /**
  * useTimer.ts — Core Time Tracking Hook
  * -----------------------------------------------
@@ -19,7 +20,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
     getStatus, startShift, startBreak, endBreak, stopShift, getHistory, sendHeartbeat,
     startIdleSession, endIdleSession, getTodayIdleSecs,
-    subscribeToThresholdEvents, rolloverShift,
+    rolloverShift,
     type BreakSource,
 } from '../api';
 
@@ -44,6 +45,22 @@ export interface HistoryShift {
 declare global {
     interface Window {
         electronAPI?: {
+            config?: { API_BASE: string; WEB_BASE: string };
+            requestApi?: (input: { path: string; method: string; body?: BodyInit | null; headers: Record<string, string> }) => Promise<{ body: string; status: number; headers: Record<string, string> }>;
+            secureStoreToken: (token: string) => Promise<void>;
+            secureClearToken: () => Promise<void>;
+            secureGetToken: () => Promise<string | null>;
+            getDeviceId?: () => Promise<string>;
+            getAppVersion?: () => Promise<string>;
+            onOtaStatus?: (callback: (status: string) => void) => void;
+            onUpdateReady?: (callback: (version: string) => void) => void;
+            restartApp?: () => void;
+            openDashboard?: (url: string) => void;
+            getAppUsage: () => Promise<{ active: unknown; usage: import('../api/usage').AppUsageData[] }>;
+            onAppTrackerUpdate: (callback: (data: { active: unknown; usage: import('../api/usage').AppUsageData[] }) => void) => void;
+            removeAppTrackerListeners: () => void;
+            getTrackingConnection?: () => Promise<{ connected: boolean; reason: string | null }>;
+            onTrackingConnection?: (cb: (state: { connected: boolean; reason: string | null }) => void) => () => void;
             // Window controls
             minimize: () => void;
             maximize: () => void;
@@ -126,7 +143,7 @@ export function useTimer() {
     // After each status poll, if the backend returns a different value (admin changed
     // it), we push the new threshold to the Electron main process via IPC.
     const lastThresholdRef = useRef<number>(
-        parseInt(localStorage.getItem('wf_idle_threshold') ?? '60', 10)
+        60
     );
     const lastScreenshotIntervalRef = useRef<number>(600);
 
@@ -153,8 +170,27 @@ export function useTimer() {
     const lockBreakRef = useRef(false);
 
     // ── Tick: forces re-render every second when shift is active ──────────────
-    const [tick, setTick] = useState(0);
+    const [nowMs, setNowMs] = useState(() => Date.now());
     const tickRef = useRef<number | null>(null);
+    const [serverTimer, setServerTimer] = useState<{
+        workSecs: number;
+        elapsedSecs: number;
+        idleSecs: number;
+        idleOpen: boolean;
+        receivedAtMs: number;
+        onlineUntilMs: number;
+        status: TimerStatus;
+    } | null>(null);
+    const [connection, setConnection] = useState(() => ({ connected: false, reason: 'Waiting for the backend' as string | null, stoppedAt: Date.now() }));
+    useEffect(() => {
+        let cancelled = false;
+        const update = (state: { connected: boolean; reason: string | null }) => {
+            if (!cancelled) setConnection({ ...state, stoppedAt: Date.now() });
+        };
+        const unsubscribe = window.electronAPI?.onTrackingConnection?.(update);
+        void window.electronAPI?.getTrackingConnection?.().then(update);
+        return () => { cancelled = true; unsubscribe?.(); };
+    }, []);
 
     // ── Midnight rollover coordination ────────────────────────────────────────
     // The rollover effect below stops the current shift and starts a new one in
@@ -164,17 +200,37 @@ export function useTimer() {
     // ref is hoisted up here so the periodic poll can suppress itself while a
     // rollover is in flight.
     const rolloverInFlightRef = useRef(false);
+    const [timezone, setTimezone] = useState('UTC');
+    const timezoneRef = useRef('UTC');
+    const statusSequence = useRef(0);
 
     // ── Data Fetching ─────────────────────────────────────────────────────────
 
     const fetchStatus = useCallback(async (options?: { throwOnError?: boolean }) => {
+        const sequence = ++statusSequence.current;
         try {
             const data = await getStatus();
+            if (sequence !== statusSequence.current) return;
+            setTimezone(data.timezone || 'UTC'); timezoneRef.current = data.timezone || 'UTC';
             setStatus(data.status);
             if (data.shift && typeof data.shift === 'object') {
                 setCurrentShift(data.shift as HistoryShift);
+                if (data.timer) {
+                    setServerTimer({
+                        workSecs: Math.max(0, Math.trunc(data.timer.workSecs)),
+                        elapsedSecs: Math.max(0, Math.trunc(data.timer.elapsedSecs)),
+                        idleSecs: Math.max(0, Math.trunc(data.timer.idleSecs)),
+                        idleOpen: Boolean((data.shift as HistoryShift & { idleSessions?: Array<{ endTime: string | null }> }).idleSessions?.some(row => !row.endTime)),
+                        receivedAtMs: Date.now(),
+                        onlineUntilMs: Date.now() + Math.max(0, Date.parse(data.trackingLease?.onlineUntil ?? '') - Date.parse(data.trackingLease?.serverNow ?? '') || 0),
+                        status: data.status,
+                    });
+                } else {
+                    setServerTimer(null);
+                }
             } else {
                 setCurrentShift(null);
+                setServerTimer(null);
             }
 
             // ── Live idle threshold sync ──────────────────────────────────────
@@ -182,7 +238,7 @@ export function useTimer() {
             const newThreshold = data.idleThresholdSecs;
             if (typeof newThreshold === 'number' && newThreshold !== lastThresholdRef.current) {
                 lastThresholdRef.current = newThreshold;
-                localStorage.setItem('wf_idle_threshold', String(newThreshold));
+
                 console.log(`[Idle] Admin updated threshold → ${newThreshold}s. Pushing to Electron.`);
 
                 // Push to Electron main process so polling uses the new value immediately
@@ -296,8 +352,7 @@ export function useTimer() {
 
     // Initial load: fetch all data in parallel
     useEffect(() => {
-        setLoading(true);
-        Promise.all([fetchStatus(), fetchHistory(), fetchIdleSecs()])
+        Promise.resolve().then(() => Promise.all([fetchStatus(), fetchHistory(), fetchIdleSecs()]))
             .finally(() => setLoading(false));
 
         // ── Push initial thresholds to Electron on mount ──────────────────────────
@@ -320,7 +375,7 @@ export function useTimer() {
 
     useEffect(() => {
         if (status !== 'stopped' && currentShift) {
-            tickRef.current = window.setInterval(() => setTick(t => t + 1), 1000);
+            tickRef.current = window.setInterval(() => setNowMs(Date.now()), 1000);
         } else {
             if (tickRef.current) clearInterval(tickRef.current);
         }
@@ -364,6 +419,7 @@ export function useTimer() {
         const tickHeartbeat = async () => {
             try {
                 await sendHeartbeat();
+                await fetchStatus();
             } catch (err) {
                 console.warn('[Heartbeat] Failed to ping backend:', err);
             }
@@ -375,7 +431,7 @@ export function useTimer() {
         }, 20_000);
 
         return () => clearInterval(interval);
-    }, [status]);
+    }, [status, fetchStatus]);
 
 
     // ── Shift status sync to main process ──────────────────────────────────────
@@ -403,8 +459,7 @@ export function useTimer() {
     useEffect(() => {
         if (status !== 'working' && status !== 'on_break') return;
 
-        const localDayKey = (d: Date) =>
-            `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const localDayKey = (d: Date) => getDateKeyInTimeZone(d, timezoneRef.current);
 
         const performRollover = async () => {
             if (rolloverInFlightRef.current) return;
@@ -479,24 +534,7 @@ export function useTimer() {
     // When admin changes a user's idle threshold, the backend pushes an
     // `idle-threshold-changed` event. This callback fires in milliseconds
     // and immediately applies the new threshold to Electron's idle poller.
-    useEffect(() => {
-        const unsubscribe = subscribeToThresholdEvents((newThreshold: number) => {
-            // Guard: only act if the value actually changed
-            if (newThreshold === lastThresholdRef.current) return;
 
-            lastThresholdRef.current = newThreshold;
-            localStorage.setItem('wf_idle_threshold', String(newThreshold));
-            console.log(`[Idle] SSE: admin updated threshold → ${newThreshold}s`);
-
-            // Push to Electron main process — idle polling switches to new value instantly
-            const api = window.electronAPI;
-            if (api && 'setIdleThreshold' in api) {
-                (api as unknown as { setIdleThreshold: (s: number) => void }).setIdleThreshold(newThreshold);
-            }
-        });
-
-        return unsubscribe; // closes the EventSource on unmount
-    }, []);
 
     // ── Idle Event Listeners (Electron IPC) ───────────────────────────────────
     // Only active when a shift is in 'working' state (not on break, not stopped).
@@ -632,14 +670,13 @@ export function useTimer() {
     // ── Computed Stats ────────────────────────────────────────────────────────
     // Recalculated on every render (every second when shift is active)
 
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-    const todayStart = startOfToday.getTime();
-    const MAX_DAY_SECS = 24 * 60 * 60;
-    const todayEnd = todayStart + MAX_DAY_SECS * 1000;
+    const bounds = getUtcDayBounds(undefined, timezone);
+    const todayStart = bounds.start.getTime();
+    const todayEnd = bounds.end.getTime();
+    const MAX_DAY_SECS = (todayEnd - todayStart) / 1000;
     const maxTodayElapsedSecs = Math.max(
         0,
-        Math.min(MAX_DAY_SECS, Math.floor((Math.min(Date.now(), todayEnd) - todayStart) / 1000))
+        Math.min(MAX_DAY_SECS, Math.floor((Math.min(nowMs, todayEnd) - todayStart) / 1000))
     );
 
     // Completed shifts today (used for historical totals)
@@ -671,7 +708,6 @@ export function useTimer() {
     let elapsedSecs = 0;
 
     if (currentShift) {
-        const nowMs = Date.now();
         const effectiveNowMs = Math.min(nowMs, todayEnd);
         const shiftStartMs = new Date(currentShift.startTime).getTime();
         const dayClampedStartMs = Math.max(shiftStartMs, todayStart);
@@ -699,7 +735,15 @@ export function useTimer() {
     // Show only the CURRENT shift's work/break time.
     // After checkout (currentShift = null), activeWork = 0 → timer resets to 00:00:00.
     // One check-in → check-out = one shift. Backend history is unaffected.
-    const todayWorked = activeWork;
+    // Prefer the backend's authoritative adjusted total. Advance it locally
+    // between status polls only while working, so breaks remain paused.
+    const serverAdvanceSecs = serverTimer && status === 'working' && serverTimer.status === 'working'
+        ? Math.max(0, Math.floor((Math.min(connection.connected ? nowMs : connection.stoppedAt, serverTimer.onlineUntilMs) - serverTimer.receivedAtMs) / 1000))
+        : 0;
+    const todayWorked = serverTimer
+        ? Math.max(0, serverTimer.workSecs + serverAdvanceSecs)
+        : activeWork;
+    if (serverTimer) elapsedSecs = serverTimer.elapsedSecs + serverAdvanceSecs;
     const todayBreakSecs = activeBreakSecs;
 
     // ── Idle time: combine closed sessions (from backend) + live active session ──
@@ -708,9 +752,10 @@ export function useTimer() {
     // Together they give a smooth second-by-second idle counter, just like
     // todayWorked / todayBreakSecs are computed on every tick.
     const liveIdleSecs = idleSessionStartTime
-        ? Math.max(0, Math.floor((Math.min(Date.now(), todayEnd) - Math.max(idleSessionStartTime.getTime(), todayStart)) / 1000))
+        ? Math.max(0, Math.floor((Math.min(nowMs, todayEnd) - Math.max(idleSessionStartTime.getTime(), todayStart)) / 1000))
         : 0;
-    const todayIdleSecs = Math.min(maxTodayElapsedSecs, Math.max(0, closedIdleSecs + liveIdleSecs));
+    const todayIdleSecs = serverTimer ? serverTimer.idleSecs + (serverTimer.idleOpen ? serverAdvanceSecs : 0)
+        : Math.min(maxTodayElapsedSecs, Math.max(0, closedIdleSecs + liveIdleSecs));
 
     // ── Actions ───────────────────────────────────────────────────────────────
 
@@ -773,7 +818,7 @@ export function useTimer() {
                 if (!prev) return prev;
                 return {
                     ...prev,
-                    breaks: [...prev.breaks, { id: `temp-${Date.now()}`, startTime: now, endTime: null, source: 'manual' }],
+                    breaks: [...prev.breaks, { id: `temp-${nowMs}`, startTime: now, endTime: null, source: 'manual' }],
                 };
             });
         }
@@ -823,10 +868,11 @@ export function useTimer() {
     };
 
     // Suppress unused variable warning — tick is only used to trigger re-renders
-    void tick;
+    void nowMs;
 
     return {
         status,
+        connection,
         elapsedSecs,
         history,
         loading,

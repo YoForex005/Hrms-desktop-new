@@ -3,39 +3,18 @@ import './index.css';
 import LoginPage from './pages/LoginPage';
 import Dashboard from './pages/Dashboard';
 import Titlebar from './components/Titlebar';
-import { getMe, setAuthToken, syncSecureToken, getToken } from './api';
+import { getMe, setAuthToken, syncSecureToken, getToken, logoutSession } from './api';
 import type { CompanyBrandChangedDetail } from './api';
 import type { User } from './types';
 
-function getSavedUser(): User | null {
-    const raw = localStorage.getItem('wf_user');
-    if (!raw) return null;
-
-    try {
-        const parsed = JSON.parse(raw) as Partial<User>;
-        if (
-            typeof parsed.id === 'string' &&
-            typeof parsed.name === 'string' &&
-            typeof parsed.email === 'string'
-        ) {
-            return {
-                id: parsed.id,
-                name: parsed.name,
-                email: parsed.email,
-                companyId: typeof parsed.companyId === 'string' ? parsed.companyId : undefined,
-                companyName: typeof parsed.companyName === 'string' ? parsed.companyName : undefined,
-                companyLogoUrl: typeof parsed.companyLogoUrl === 'string' ? parsed.companyLogoUrl : null,
-            };
-        }
-        return null;
-    } catch {
-        return null;
-    }
-}
+// Retire the old employee profile cache on upgrade. Profiles stay in React memory.
+localStorage.removeItem('wf_user');
+localStorage.removeItem('wf_idle_threshold');
 
 function App() {
-    const [user, setUser] = useState<User | null>(getSavedUser());
+    const [user, setUser] = useState<User | null>(null);
     const [token, setToken] = useState<string | null>(() => getToken());
+    const [logoutError, setLogoutError] = useState('');
 
     useEffect(() => {
         syncSecureToken().then((t) => {
@@ -51,7 +30,7 @@ function App() {
 
     // Fetch app version on mount
     useEffect(() => {
-        const api = (window as any).electronAPI;
+        const api = window.electronAPI;
         if (api?.getAppVersion) {
             api.getAppVersion().then((v: string) => setVersion(v));
         }
@@ -95,7 +74,7 @@ function App() {
     const handleRestart = () => {
         setIsRestarting(true);
         setTimeout(() => {
-            const api = (window as any).electronAPI;
+            const api = window.electronAPI;
             if (api?.restartApp) {
                 api.restartApp();
             }
@@ -133,7 +112,7 @@ function App() {
                 const freshUser = await getMe();
                 if (cancelled) return;
                 setUser(freshUser);
-                localStorage.setItem('wf_user', JSON.stringify(freshUser));
+
             } catch (err) {
                 if (!cancelled) {
                     console.warn('[Auth] Unable to refresh user profile', err);
@@ -163,7 +142,7 @@ function App() {
                     companyName: detail.companyName,
                     companyLogoUrl: detail.companyLogoUrl,
                 };
-                localStorage.setItem('wf_user', JSON.stringify(next));
+
                 return next;
             });
         };
@@ -187,7 +166,12 @@ function App() {
         setToken(t);
     };
 
-    const handleLogout = () => {
+    const handleLogout = async () => {
+        setLogoutError('');
+        try { await logoutSession(); } catch {
+            setLogoutError('Unable to sign out. Check your connection and try again.');
+            return;
+        }
         setAuthToken(null);
         localStorage.removeItem('wf_user');
         setUser(null);
@@ -209,6 +193,7 @@ function App() {
     return (
         <>
             <Titlebar userName={user.name} />
+            {logoutError && <p role="alert" style={{ color: 'var(--danger)', margin: '8px 16px', fontSize: 12 }}>{logoutError}</p>}
             <Dashboard view="tracker" user={user} onLogout={handleLogout} />
 
             {version && (

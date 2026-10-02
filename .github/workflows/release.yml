@@ -6,7 +6,22 @@ on:
       - 'v*' # Trigger on all version tags (e.g., v1.2.21)
 
 jobs:
+  validate-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify release version and tag
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: node scripts/validate-release.cjs
+      - name: Require compatible public backend
+        run: node scripts/validate-backend.cjs
+
   release:
+    needs: validate-release
     name: Build on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
 
@@ -25,33 +40,44 @@ jobs:
           node-version: 22
 
       - name: Install Dependencies
-        run: npm install
+        run: npm ci
+
+      - name: Integration regression tests
+        run: npm test
 
       - name: Build and Publish (macOS)
         if: matrix.os == 'macos-latest'
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          CSC_IDENTITY_AUTO_DISCOVERY: false
-          VITE_API_BASE: https://hrmsbackend.yoforex.net/api
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_IDENTITY_AUTO_DISCOVERY: true
+          VITE_API_BASE: https://api.emptrakr.com/api
           VITE_WEB_BASE: https://emptrakr.com
-          API_BASE: https://hrmsbackend.yoforex.net/api
+          API_BASE: https://api.emptrakr.com/api
           WEB_BASE: https://emptrakr.com
         run: |
+          node scripts/validate-signing.cjs
           node scripts/write-electron-config.cjs
           npm run build
-          npx electron-builder --mac --x64 --arm64 -p always
+          npx electron-builder --mac --x64 --arm64 -p always --config.forceCodeSigning=true --config.mac.notarize=true
 
       - name: Build and Publish (Windows)
         if: matrix.os == 'windows-latest'
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          CSC_IDENTITY_AUTO_DISCOVERY: false
-          VITE_API_BASE: https://hrmsbackend.yoforex.net/api
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          VITE_API_BASE: https://api.emptrakr.com/api
           VITE_WEB_BASE: https://emptrakr.com
-          API_BASE: https://hrmsbackend.yoforex.net/api
+          API_BASE: https://api.emptrakr.com/api
           WEB_BASE: https://emptrakr.com
         run: |
+          node scripts/validate-signing.cjs
           node scripts/write-electron-config.cjs
           npm run build
-          npx electron-builder --win -p always
+          npx electron-builder --win -p always --config.forceCodeSigning=true
 

@@ -2,16 +2,7 @@ const axios = require('axios');
 const os = require('os');
 const path = require('path');
 
-function readRuntimeConfig() {
-    try {
-        return require(path.join(__dirname, '..', 'runtime-config.json'));
-    } catch {
-        return {};
-    }
-}
-
-const runtimeConfig = readRuntimeConfig();
-const API_BASE = process.env.API_BASE || runtimeConfig.API_BASE || 'https://api.emptrakr.com/api';
+const { API_BASE } = require('../config.cjs');
 
 function getDefaultDeviceId() {
     let username = 'unknown-user';

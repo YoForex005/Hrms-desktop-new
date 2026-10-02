@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 interface TitlebarProps {
     userName: string;
 }
@@ -31,7 +32,7 @@ export default function Titlebar({ userName }: TitlebarProps) {
             </div>
 
             <div className="titlebar__right">
-                <div className="titlebar__controls" style={{ display: 'flex', gap: '8px', alignItems: 'center', WebkitAppRegion: 'no-drag' } as any}>
+                <div className="titlebar__controls" style={{ display: 'flex', gap: '8px', alignItems: 'center', WebkitAppRegion: 'no-drag' } as CSSProperties & { WebkitAppRegion: 'no-drag' }}>
                     <button className="titlebar__icon-btn" title="Minimize" onClick={handleMin}>
                         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
                             <path d="M2 6H10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>

@@ -14,6 +14,15 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
+    config: ipcRenderer.sendSync('get-config'),
+    requestApi: request => ipcRenderer.invoke('api-request', request),
+    getDeviceId: () => ipcRenderer.invoke('get-device-id'),
+    getTrackingConnection: () => ipcRenderer.invoke('get-tracking-connection'),
+    onTrackingConnection: callback => {
+        const listener = (_event, state) => callback(state);
+        ipcRenderer.on('tracking-connection', listener);
+        return () => ipcRenderer.removeListener('tracking-connection', listener);
+    },
     // ── Window Controls ──────────────────────────────────────────────────────
     minimize: () => ipcRenderer.send('window-minimize'),
     maximize: () => ipcRenderer.send('window-maximize'),
@@ -172,4 +181,3 @@ contextBridge.exposeInMainWorld('electronAPI', {
     secureGetToken: () => ipcRenderer.invoke('secure-get-token'),
     secureClearToken: () => ipcRenderer.invoke('secure-clear-token'),
 });
-

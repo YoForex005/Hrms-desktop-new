@@ -35,6 +35,10 @@ function fail(msg, code = 1) {
 
 function electronBinaryOk() {
     if (!fs.existsSync(electronDir)) return { ok: false, reason: 'electron package not installed' };
+    const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
+    const expectedVersion = lock.packages?.['node_modules/electron']?.version;
+    const installedVersion = JSON.parse(fs.readFileSync(path.join(electronDir,'package.json'),'utf8')).version;
+    if (expectedVersion && installedVersion !== expectedVersion) fail('Installed Electron ' + installedVersion + ' does not match locked ' + expectedVersion + '. Close this desktop development app and run npm ci before starting it again.');
     if (!fs.existsSync(pathFile)) return { ok: false, reason: 'missing path.txt' };
 
     const relative = fs.readFileSync(pathFile, 'utf8').trim();

@@ -23,7 +23,7 @@ function StatusBadge({ status }: { status: string }) {
 
 function CompanyBrandHeader({ user }: { user: User }) {
     const brandName = user.companyName?.trim() || 'EmpTrakr';
-    const logoUrl = user.companyLogoUrl?.trim() || '/logo.png';
+    const logoUrl = user.companyLogoUrl?.trim() || './logo.png';
 
     return (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', paddingBottom: 14, paddingTop: 4 }}>
@@ -292,9 +292,9 @@ interface DashboardProps {
 
 export default function Dashboard({ view, user, onLogout }: DashboardProps) {
     const {
-        status, loading, actionLoading, error,
+        status, loading, actionLoading, error, connection,
         handleStart, handleBreak, handleStop,
-        todayWorked, todayBreakSecs: _todayBreakSecs, todayBreaksCount, todayIdleSecs,
+        todayWorked, todayBreaksCount, todayIdleSecs,
         expectedWorkSecs, expectedActiveSecs, maxBreaks,
         workLocation,
     } = useTimer();
@@ -353,7 +353,7 @@ export default function Dashboard({ view, user, onLogout }: DashboardProps) {
     }, [status]);
 
     useEffect(() => {
-        const api = (window as any).electronAPI;
+        const api = window.electronAPI;
         if (!api?.onAppCloseRequest) return;
 
         api.onAppCloseRequest(() => {
@@ -376,7 +376,7 @@ export default function Dashboard({ view, user, onLogout }: DashboardProps) {
             return;
         }
         // Finally close after checkout
-        (window as any).electronAPI?.forceClose?.();
+        window.electronAPI?.forceClose?.();
     };
 
     // Initialize background app tracking sync
@@ -392,6 +392,11 @@ export default function Dashboard({ view, user, onLogout }: DashboardProps) {
 
     return (
         <div className="main">
+            {status !== 'stopped' && !connection.connected && (
+                <div role="status" style={{ padding: 12, marginBottom: 12, background: '#fff7ed', color: '#9a3412', borderRadius: 8 }}>
+                    Tracking paused. {connection.reason || 'Waiting for the backend connection.'}
+                </div>
+            )}
             {/* Clock-in location modal */}
             {showLocationModal && (
                 <ClockInLocationModal
@@ -500,7 +505,7 @@ export default function Dashboard({ view, user, onLogout }: DashboardProps) {
                             className="btn"
                             onClick={() => {
                                 const url = `${WEB_BASE.replace(/\/+$/, '')}/dashboard`;
-                                const electronAPI = (window as any).electronAPI;
+                                const electronAPI = window.electronAPI;
                                 if (electronAPI?.openDashboard) {
                                     electronAPI.openDashboard(url);
                                 } else {

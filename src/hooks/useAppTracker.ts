@@ -3,7 +3,7 @@ import type { AppUsageData } from '../api/usage';
 
 // Minimal type for IPC data
 interface IpcTrackerData {
-    active: any;
+    active: unknown;
     usage: AppUsageData[];
 }
 
@@ -15,7 +15,7 @@ export function useAppTracker() {
     const [usage, setUsage] = useState<AppUsageData[]>([]);
 
     useEffect(() => {
-        const win = window as any;
+        const win = window;
         if (!win.electronAPI) return;
 
         // Fetch initial state

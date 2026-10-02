@@ -1,7 +1,7 @@
 {
   "name": "emptrakr-desktop",
   "private": true,
-  "version": "1.2.24",
+  "version": "1.2.30",
   "description": "EmpTrakr Desktop Application",
   "author": "EmpTrakr",
   "type": "module",
@@ -16,16 +16,23 @@
     "build": "tsc -b && vite build",
     "electron:build": "node scripts/ensure-electron.cjs && npm run build && node scripts/write-electron-config.cjs && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win --publish never",
     "electron:build:mac": "node scripts/ensure-electron.cjs && npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --x64 --arm64",
-    "electron:build:mac:signed": "node scripts/ensure-electron.cjs && npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=true electron-builder --mac",
-    "electron:publish": "node scripts/ensure-electron.cjs && npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win -p always",
-    "preview": "vite preview"
+    "electron:build:mac:signed": "node scripts/validate-signing.cjs && node scripts/ensure-electron.cjs && npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=true electron-builder --mac --config.forceCodeSigning=true --config.mac.notarize=true",
+    "electron:publish": "node scripts/validate-release.cjs && node scripts/validate-backend.cjs && node scripts/validate-signing.cjs && node scripts/ensure-electron.cjs && npm run build && electron-builder --win -p always --config.forceCodeSigning=true",
+    "release:check": "node scripts/validate-release.cjs",
+    "preview": "vite preview",
+    "predev": "node scripts/write-electron-config.cjs --development",
+    "predev:electron": "node scripts/write-electron-config.cjs --development",
+    "prebuild": "node scripts/write-electron-config.cjs",
+    "test": "node --test tests/*.test.js",
+    "backend:check": "node scripts/validate-backend.cjs",
+    "lint": "eslint src"
   },
   "engines": {
-    "node": ">=20 <25"
+    "node": ">=22 <25"
   },
   "dependencies": {
     "active-win": "^7.7.2",
-    "axios": "^1.13.5",
+    "axios": "^1.20.0",
     "electron-store": "^11.0.2",
     "electron-updater": "^6.8.3",
     "react": "^19.2.0",
@@ -40,7 +47,7 @@
     "@vitejs/plugin-react": "^5.1.1",
     "concurrently": "^9.2.1",
     "cross-env": "^7.0.3",
-    "electron": "^40.10.6",
+    "electron": "^44.5.1",
     "electron-builder": "^26.8.1",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",
@@ -70,7 +77,7 @@
       "electron/**/*"
     ],
     "win": {
-      "signAndEditExecutable": false,
+      "signAndEditExecutable": true,
       "target": [
         {
           "target": "nsis",
@@ -82,10 +89,11 @@
     },
     "mac": {
       "target": [
-        "dmg"
+        "dmg",
+        "zip"
       ],
       "category": "public.app-category.business",
-      "identity": null,
+      "hardenedRuntime": true,
       "icon": "build/icon.icns"
     },
     "nsis": {

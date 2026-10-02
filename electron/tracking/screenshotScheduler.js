@@ -1,5 +1,9 @@
-const { captureCurrentMonitorPng } = require('./screenshotCapture');
-const { getDefaultDeviceId, getWorkStatus, uploadScreenshot } = require('./screenshotUploader');
+const { queueForToken } = require('./deliveryQueue.cjs');
+const online = require('./onlineState.cjs');
+online.subscribe(state => { if (!state.connected) clearRetryTimer(); });
+const { randomUUID } = require('crypto');
+const { captureAllMonitorsPng } = require('./screenshotCapture');
+const { getDefaultDeviceId, uploadScreenshot } = require('./screenshotUploader');
 const { describeHttpError } = require('./httpError');
 
 const IS_DEV = process.env.NODE_ENV === 'development';
@@ -8,7 +12,13 @@ const MIN_SCREENSHOT_INTERVAL_SECS = 60;
 const MAX_SCREENSHOT_INTERVAL_SECS = 3600;
 
 let authToken = null;
+let trackingContext = { status: 'stopped', shift: null };
+let paused = false;
+function setTrackingContext(context) { trackingContext = context.shift || context.status === 'stopped' ? context : { ...trackingContext, status: context.status }; }
+function setPaused(value) { paused = !!value; }
 let timer = null;
+let retryTimer = null;
+let uploadInFlight = false;
 let running = false;
 let tickInFlight = false;
 let screenshotIntervalMs = DEFAULT_SCREENSHOT_INTERVAL_MS;
@@ -37,6 +47,63 @@ function clearTimer() {
     timer = null;
 }
 
+function clearRetryTimer() {
+    if (retryTimer !== null) clearTimeout(retryTimer);
+    retryTimer = null;
+}
+
+function scheduleRetry(token) {
+    clearRetryTimer();
+    if (!running || !token || authToken !== token || !online.isOnline()) return;
+    const health = queueForToken(token, 'screenshot').getHealth();
+    if (!health.pending) return;
+    const delay = Math.max(250, health.retryAt - Date.now());
+    retryTimer = setTimeout(async () => {
+        retryTimer = null;
+        await flushPending(token);
+    }, delay);
+}
+
+function recordFailure(error) {
+    lastFailureAt = new Date().toISOString();
+    lastFailureMessage = 'Screenshot has not been acknowledged; ' + describeHttpError(error, 'check storage and connection.');
+}
+
+async function flushPending(token) {
+    if (!running || authToken !== token || uploadInFlight || !online.isOnline()) return;
+    uploadInFlight = true;
+    try {
+        const queue = queueForToken(token, 'screenshot');
+        await queue.flush(async item => {
+            try {
+                const response = await uploadScreenshot(token, item);
+                const shot = response?.data?.screenshot;
+                if (authToken === token && shot?.id && shot.requestId === item.eventId) {
+                    lastSuccessAt = new Date().toISOString();
+                    lastFailureMessage = null;
+                    console.log(`[Screenshot] Upload confirmed. requestId=${shot.requestId}, rowId=${shot.rowId}, storageFileId=${shot.id}`);
+                } else if (authToken === token) {
+                    recordFailure(new Error('Matching upload acknowledgement missing'));
+                }
+                return response;
+            } catch (error) {
+                if (authToken === token) recordFailure(error);
+                throw error;
+            }
+        }, () => running && authToken === token);
+    } catch (error) {
+        if (authToken === token) {
+            recordFailure(error);
+            if ([401, 403].includes(error?.response?.status)) clearAuthToken();
+        }
+    } finally {
+        uploadInFlight = false;
+        // Retry delivery independently of the next screenshot capture.
+        try { scheduleRetry(authToken); }
+        catch (error) { recordFailure(error); }
+    }
+}
+
 function scheduleNextTick() {
     clearTimer();
     if (!running) return;
@@ -45,6 +112,7 @@ function scheduleNextTick() {
     firstCaptureAfterAuth = false;
 
     timer = setTimeout(async () => {
+        timer = null;
         await runCaptureCycle();
         scheduleNextTick();
     }, delayMs);
@@ -52,44 +120,41 @@ function scheduleNextTick() {
 
 async function runCaptureCycle() {
     if (tickInFlight) return;
-    if (!authToken) {
+    if (!authToken || !online.isOnline()) {
         console.log('[Screenshot] Skipping cycle: auth token missing');
         return;
     }
 
     tickInFlight = true;
+    const token = authToken;
     try {
-        const status = await getWorkStatus(authToken);
-        if (status !== 'working') {
+        const queue = queueForToken(token, 'screenshot');
+        await flushPending(token);
+        if (!running || authToken !== token) return;
+        const status = trackingContext.status;
+        if (status !== 'working' || !trackingContext.shift?.id || paused) {
             console.log(`[Screenshot] Skipping cycle: shift status is '${status || 'unknown'}'`);
             return;
         }
 
-        const capture = await captureCurrentMonitorPng();
+        const shiftId = trackingContext.shift.id;
+        const capturedAt = online.timestamp();
+        const revision = online.snapshot().revision;
+        const captures = await captureAllMonitorsPng();
+        if (!online.isOnline() || online.snapshot().revision !== revision || !running || authToken !== token || trackingContext.shift?.id !== shiftId || paused || trackingContext.status !== 'working') return;
+        for (const capture of captures) {
         const payload = {
-            capturedAt: new Date().toISOString(),
+            eventId: randomUUID(),
+            shiftId,
+            capturedAt,
             deviceId,
             display: capture.display,
             imageBase64: capture.imageBuffer.toString('base64'),
         };
 
-        const response = await uploadScreenshot(authToken, payload);
-        const screenshot = response?.data?.screenshot;
-        const fileId = screenshot?.id;
-        const requestId = screenshot?.requestId;
-        const rowId = screenshot?.rowId;
-
-        if (fileId && requestId && rowId) {
-            console.log(
-                `[Screenshot] Upload confirmed end-to-end. requestId=${requestId}, rowId=${rowId}, oneDriveFileId=${fileId}`
-            );
-        } else if (fileId) {
-            console.log(`[Screenshot] Upload success. OneDrive file id: ${fileId}`);
-        } else {
-            console.log('[Screenshot] Upload success.');
+        queue.enqueue(payload);
         }
-        lastSuccessAt = new Date().toISOString();
-        lastFailureMessage = null;
+        await flushPending(token);
     } catch (err) {
         const statusCode = err?.response?.status;
         const msg = describeHttpError(err, 'Unknown screenshot error');
@@ -97,7 +162,8 @@ async function runCaptureCycle() {
         lastFailureMessage = msg;
         if (statusCode === 503) {
             console.log('[Screenshot] Upload rejected: admin drive is disconnected |', msg);
-        } else if (statusCode === 401) {
+        } else if (statusCode === 401 || statusCode === 403) {
+            clearAuthToken();
             console.log('[Screenshot] Upload skipped: auth token expired |', msg);
         } else {
             console.log('[Screenshot] Capture/upload failed:', msg);
@@ -109,20 +175,28 @@ async function runCaptureCycle() {
 
 function setAuthToken(token) {
     if (typeof token !== 'string') {
-        authToken = null;
+        clearAuthToken();
         return;
     }
     const normalized = token.trim().replace(/^Bearer\s+/i, '');
+    if (authToken === (normalized || null)) return;
+    clearRetryTimer();
+    if (authToken !== normalized) trackingContext = { status: 'stopped', shift: null };
     authToken = normalized || null;
 
     // Take the first screenshot shortly after login in dev/local testing instead
     // of waiting a full admin interval before anything appears on the dashboard.
     firstCaptureAfterAuth = !!authToken;
-    if (running) scheduleNextTick();
+    if (running) {
+        scheduleNextTick();
+        try { scheduleRetry(authToken); } catch (error) { recordFailure(error); }
+    }
 }
 
 function clearAuthToken() {
-    authToken = null;
+    clearRetryTimer();
+    if (authToken) queueForToken(authToken, 'screenshot').clear();
+    authToken = null; trackingContext = { status: 'stopped', shift: null };
 }
 
 function setIntervalSecs(seconds) {
@@ -142,12 +216,15 @@ function start() {
     if (running) return;
     running = true;
     scheduleNextTick();
+    try { scheduleRetry(authToken); } catch (error) { recordFailure(error); }
     console.log(`[Screenshot] Scheduler started (${describeInterval(screenshotIntervalMs)} interval, mode=${IS_DEV ? 'dev' : 'prod'})`);
 }
 
 function stop() {
     running = false;
     clearTimer();
+    clearRetryTimer();
+    if (authToken) queueForToken(authToken, 'screenshot').clear();
     console.log('[Screenshot] Scheduler stopped');
 }
 
@@ -155,6 +232,7 @@ function getHealth() {
     return {
         running,
         tickInFlight,
+        uploadInFlight,
         intervalMs: screenshotIntervalMs,
         hasAuthToken: !!authToken,
         lastSuccessAt,
@@ -164,6 +242,8 @@ function getHealth() {
 }
 
 module.exports = {
+    setTrackingContext,
+    setPaused,
     start,
     stop,
     setAuthToken,

@@ -1,34 +1,7 @@
 const fs = require('fs');
 const path = require('path');
-
-const root = path.resolve(__dirname, '..');
-const envPath = path.join(root, '.env');
-
-function readEnvFile(filePath) {
-    if (!fs.existsSync(filePath)) return {};
-    const values = {};
-    for (const line of fs.readFileSync(filePath, 'utf8').split(/\r?\n/)) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith('#')) continue;
-        const eq = trimmed.indexOf('=');
-        if (eq === -1) continue;
-        const key = trimmed.slice(0, eq).trim();
-        const value = trimmed.slice(eq + 1).trim().replace(/^['"]|['"]$/g, '');
-        values[key] = value;
-    }
-    return values;
-}
-
-const env = { ...readEnvFile(envPath), ...process.env };
-// Local defaults for day-to-day dev. Production builds should set env vars
-// (API_BASE / WEB_BASE / VITE_*) before running this script.
-const config = {
-    API_BASE: env.API_BASE || env.VITE_API_BASE || 'https://api.emptrakr.com/api',
-    WEB_BASE: env.WEB_BASE || env.VITE_WEB_BASE || 'https://emptrakr.com',
-};
-
-const outPath = path.join(root, 'electron', 'runtime-config.json');
-fs.writeFileSync(outPath, JSON.stringify(config, null, 2));
-console.log(`[electron-config] wrote ${outPath}`);
-console.log(`[electron-config] API_BASE=${config.API_BASE}`);
-console.log(`[electron-config] WEB_BASE=${config.WEB_BASE}`);
+const { resolveConfig } = require('./config.cjs');
+const mode = process.argv.includes('--development') ? 'development' : 'production';
+const config = resolveConfig(mode);
+fs.writeFileSync(path.resolve(__dirname, '../electron/runtime-config.json'), JSON.stringify(config, null, 2));
+console.log('[electron-config] ' + mode + ': ' + config.API_BASE + ', ' + config.WEB_BASE);

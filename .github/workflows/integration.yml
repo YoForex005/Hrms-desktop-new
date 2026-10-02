@@ -1,0 +1,26 @@
+name: Desktop integration checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      API_BASE: https://api.emptrakr.com/api
+      VITE_API_BASE: https://api.emptrakr.com/api
+      WEB_BASE: https://emptrakr.com
+      VITE_WEB_BASE: https://emptrakr.com
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run lint
+      - run: npm run build

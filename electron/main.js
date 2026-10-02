@@ -26,15 +26,10 @@ const { spawn } = require('child_process');
 const tracker = require('./tracking/tracker');
 const screenshotScheduler = require('./tracking/screenshotScheduler');
 const wfhScreenMonitor = require('./tracking/wfhScreenMonitor');
+const online = require('./tracking/onlineState.cjs');
+const { clearQueues, removeLegacyTelemetry } = require('./tracking/deliveryQueue.cjs');
 const { URL } = require('url');
 
-function readRuntimeConfig() {
-    try {
-        return require('./runtime-config.json');
-    } catch {
-        return {};
-    }
-}
 
 // Set the app name explicitly for the taskbar and OS integration
 app.setName('EmpTrakr');
@@ -64,9 +59,9 @@ if (!gotSingleInstanceLock) {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
-const runtimeConfig = readRuntimeConfig();
-const API_BASE = process.env.API_BASE || runtimeConfig.API_BASE || 'https://api.emptrakr.com/api';
-const WEB_BASE = process.env.WEB_BASE || runtimeConfig.WEB_BASE || (isDev ? 'http://localhost:3000' : 'https://emptrakr.com');
+const runtimeConfig = require('./config.cjs');
+const API_BASE = runtimeConfig.API_BASE;
+const WEB_BASE = runtimeConfig.WEB_BASE;
 const START_EMBEDDED_BACKEND = process.env.START_EMBEDDED_BACKEND === 'true' || runtimeConfig.START_EMBEDDED_BACKEND === true;
 
 function createNoopAutoUpdater() {
@@ -118,9 +113,20 @@ const IDLE_POLL_INTERVAL_MS = 1_000; // 1 second
 // ── State ─────────────────────────────────────────────────────────────────────
 
 let mainWindow = null;
+online.subscribe(state => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('tracking-connection', state); });
+
+function trustedSender(event) {
+    const expected = isDev ? 'http://localhost:5173' : require('url').pathToFileURL(path.join(__dirname, '../dist/index.html')).href;
+    return require('./ipcPolicy.cjs').isTrustedSender(event, mainWindow?.webContents, expected, isDev);
+}
+function onTrusted(channel, listener) { ipcMain.on(channel, (event, ...args) => { if (trustedSender(event)) return listener(event, ...args); }); }
+function handleTrusted(channel, listener) { ipcMain.handle(channel, (event, ...args) => { if (!trustedSender(event)) throw new Error('Untrusted IPC sender'); return listener(event, ...args); }); }
+function setSessionToken(token) { const next = normalizeAuthToken(token); if (next !== sessionAuthToken) { online.disconnect('Session changed'); clearQueues(); } sessionAuthToken = next; tracker.setAuthToken(sessionAuthToken); screenshotScheduler.setAuthToken(sessionAuthToken); disconnectIntentSent = false; }
+
 let backendProcess = null;
 let pendingAuthCallbackUrl = null;
 let sessionAuthToken = null;
+let attendanceRevision = 0;
 let disconnectIntentSent = false;
 let allowWindowClose = false;
 
@@ -266,7 +272,7 @@ function handleDeepLink(rawUrl) {
         const parsed = new URL(rawUrl);
         if (parsed.protocol !== `${DEEP_LINK_PROTOCOL}:`) return;
 
-        console.log('[Auth] Deep link received:', rawUrl);
+        console.log('[Auth] Deep link callback received');
         focusMainWindow();
         dispatchAuthCallback(rawUrl);
     } catch (err) {
@@ -336,6 +342,7 @@ function startIdlePolling() {
         // WFH OR-mode: either input idle OR screen idle triggers.
         // Office (default): input idle alone — existing behaviour.
         const nowIdle = isWfhMode ? (inputIdle || screenIdle) : inputIdle;
+        tracker.setPaused(nowIdle || isScreenLocked); screenshotScheduler.setPaused(nowIdle || isScreenLocked);
 
         // ── Transition: Active → Idle ──────────────────────────────────────
         if (nowIdle && !isUserIdle) {
@@ -377,7 +384,7 @@ function startIdlePolling() {
  */
 function startScreenLockDetection() {
     powerMonitor.on('lock-screen', () => {
-        isScreenLocked = true;
+        isScreenLocked = true; tracker.setPaused(true); screenshotScheduler.setPaused(true);
 
         // If the user was idle when they locked, clear that state.
         // The lock-break will cover this period going forward.
@@ -396,7 +403,7 @@ function startScreenLockDetection() {
     });
 
     powerMonitor.on('unlock-screen', () => {
-        isScreenLocked = false;
+        isScreenLocked = false; tracker.setPaused(false); screenshotScheduler.setPaused(false);
         console.log('[ScreenLock] Screen unlocked — notifying renderer to end break');
         if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('screen-unlocked');
@@ -421,11 +428,9 @@ function createWindow() {
             preload: path.join(__dirname, 'preload.js'),
             backgroundThrottling: false, // Prevents timer throttling when minimized/backgrounded
             devTools: isDev,            // Security: DevTools disabled in production builds
-            // In dev the renderer loads from http://localhost:5173, which the production
-            // backend's CORS list doesn't include. Disabling webSecurity removes the
-            // browser-side CORS check so dev fetches reach the production API.
-            // Production builds load from file:// (no origin) → CORS never applies there.
-            webSecurity: !isDev,
+            // Renderer networking goes through the validated main-process API bridge.
+            webSecurity: true,
+            sandbox: true,
         },
         backgroundColor: '#0a0b0f',
         show: false, // show only after ready-to-show to avoid white flash
@@ -459,7 +464,7 @@ function createWindow() {
 
     const startUrl = isDev
         ? 'http://localhost:5173'
-        : `file://${path.join(__dirname, '../dist/index.html')}`;
+        : require('url').pathToFileURL(path.join(__dirname, '../dist/index.html')).href;
 
     mainWindow.loadURL(startUrl);
 
@@ -480,7 +485,7 @@ function createWindow() {
         try {
             const parsed = new URL(navigationUrl);
             if (isDev && parsed.origin === 'http://localhost:5173') return;
-            if (parsed.protocol === 'file:') return;
+            if (parsed.href.split('#')[0] === require('url').pathToFileURL(path.join(__dirname, '../dist/index.html')).href) return;
         } catch {
             // Malformed URL
         }
@@ -551,35 +556,36 @@ function createWindow() {
 // ── App Lifecycle ─────────────────────────────────────────────────────────────
 
 app.whenReady().then(() => {
+    removeLegacyTelemetry(path.join(app.getPath('userData'), 'telemetry'));
     if (!gotSingleInstanceLock) return;
     // ── IPC: Window Controls ──────────────────────────────────────────────────
     // Register IPC handlers after the app is fully ready
-    ipcMain.on('window-close', () => mainWindow && mainWindow.close());
-    ipcMain.on('window-force-close', () => {
+    onTrusted('window-close', () => mainWindow && mainWindow.close());
+    onTrusted('window-force-close', () => {
         allowWindowClose = true;
         if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
     });
-    ipcMain.on('window-minimize', () => mainWindow && mainWindow.minimize());
-    ipcMain.on('window-maximize', () => {
+    onTrusted('window-minimize', () => mainWindow && mainWindow.minimize());
+    onTrusted('window-maximize', () => {
         if (!mainWindow) return;
         if (mainWindow.isMaximized()) mainWindow.unmaximize();
         else mainWindow.maximize();
     });
 
     // ── IPC: App Tracker ──────────────────────────────────────────────────────
-    ipcMain.handle('get-app-usage', async () => {
+    handleTrusted('get-app-usage', async () => {
         return tracker.getCurrentData();
     });
 
-    ipcMain.handle('get-app-version', () => {
+    handleTrusted('get-app-version', () => {
         return app.getVersion();
     });
 
-    ipcMain.on('clear-app-usage', () => {
+    onTrusted('clear-app-usage', () => {
         tracker.clearTrackingData();
     });
 
-    ipcMain.on('set-tracker-auth-token', (_event, token) => {
+    onTrusted('set-tracker-auth-token', (_event, token) => {
         if (typeof token !== 'string') return;
         tracker.setAuthToken(token);
         screenshotScheduler.setAuthToken(token);
@@ -587,18 +593,67 @@ app.whenReady().then(() => {
         disconnectIntentSent = false;
     });
 
-    ipcMain.on('clear-tracker-auth-token', () => {
+    onTrusted('clear-tracker-auth-token', () => {
+        online.disconnect('Session cleared'); clearQueues();
         tracker.clearAuthToken();
         screenshotScheduler.clearAuthToken();
         sessionAuthToken = null;
         disconnectIntentSent = false;
     });
 
+    onTrusted('get-config', event => { event.returnValue = runtimeConfig; });
+    handleTrusted('get-tracking-connection', () => online.snapshot());
+    handleTrusted('get-device-id', () => {
+        const file = path.join(app.getPath('userData'), 'device-id');
+        if (fs.existsSync(file)) { const value = fs.readFileSync(file, 'utf8'); if (/^[a-f0-9-]{36}$/.test(value)) return value; }
+        const value = require('crypto').randomUUID(); fs.writeFileSync(file, value); return value;
+    });
+    handleTrusted('api-request', async (_event, request) => {
+        const token = sessionAuthToken;
+        if (request.method === 'POST' && request.path?.startsWith('/time/')) ++attendanceRevision;
+        const revision = attendanceRevision;
+        const bridgeRequest = request.path === '/time/heartbeat' && request.method === 'POST'
+            ? { ...request, body: JSON.stringify({ trackingDisconnectedAt: online.getDisconnectedAt() }) } : request;
+        let response;
+        try { response = await require('./apiBridge.cjs').requestApi(API_BASE, token, bridgeRequest); }
+        catch (error) { if (token === sessionAuthToken) online.disconnect('Backend connection lost'); throw error; }
+        if (token !== sessionAuthToken) return response;
+        if (response.status === 401) { setSessionToken(null); tracker.clearTrackingData(); }
+        if (response.status >= 500) online.disconnect('Backend is unavailable');
+        if (response.status >= 200 && response.status < 300) {
+            const data = JSON.parse(response.body);
+            if (request.path === '/time/status' && revision === attendanceRevision) {
+                const context = data.ownedByThisDevice ? data : { status: 'stopped', shift: null };
+                currentShiftStatus = context.status; tracker.setTrackingContext(context); screenshotScheduler.setTrackingContext(context);
+                if (data.ownedByThisDevice && data.shift) online.confirm(data.trackingLease, response.roundTripMs, false);
+                else online.disconnect('No shift owned by this device');
+            }
+            if (request.method === 'POST' && request.path.startsWith('/time/') && request.path !== '/time/disconnect-intent' && revision === attendanceRevision) {
+                try {
+                    const statusResponse = await require('./apiBridge.cjs').requestApi(API_BASE, token, { method: 'GET', path: '/time/status' });
+                    if (token === sessionAuthToken && revision === attendanceRevision) {
+                        if (statusResponse.status !== 200) online.disconnect('Unable to confirm shift status');
+                        else {
+                            const state = JSON.parse(statusResponse.body);
+                            const context = state.ownedByThisDevice ? state : { status: 'stopped', shift: null };
+                            currentShiftStatus = context.status; tracker.setTrackingContext(context); screenshotScheduler.setTrackingContext(context);
+                            if (state.ownedByThisDevice && state.shift) online.confirm(state.trackingLease, statusResponse.roundTripMs,
+                                ['/time/heartbeat', '/time/start', '/time/rollover'].includes(request.path));
+                            else { online.disconnect('No active shift'); clearQueues(); }
+                        }
+                    }
+                } catch { if (token === sessionAuthToken) online.disconnect('Unable to confirm shift status'); }
+            }
+            if (request.path === '/auth/logout') { setSessionToken(null); tracker.clearTrackingData(); }
+        }
+        return response;
+    });
     let inMemoryTokenFallback = null;
 
     // ── IPC: Secure Token Storage (safeStorage / DPAPI) ──────────────────────
-    ipcMain.handle('secure-store-token', async (_event, token) => {
+    handleTrusted('secure-store-token', async (_event, token) => {
         try {
+            setSessionToken(token);
             const tokenPath = path.join(app.getPath('userData'), 'auth.enc');
             if (!token || typeof token !== 'string') {
                 inMemoryTokenFallback = null;
@@ -627,13 +682,13 @@ app.whenReady().then(() => {
         }
     });
 
-    ipcMain.handle('secure-get-token', async () => {
+    handleTrusted('secure-get-token', async () => {
         try {
             const tokenPath = path.join(app.getPath('userData'), 'auth.enc');
             if (safeStorage && safeStorage.isEncryptionAvailable()) {
                 if (!fs.existsSync(tokenPath)) return null;
                 const data = fs.readFileSync(tokenPath);
-                return safeStorage.decryptString(data);
+                const token = safeStorage.decryptString(data); setSessionToken(token); return token;
             }
             return inMemoryTokenFallback;
         } catch (err) {
@@ -642,8 +697,9 @@ app.whenReady().then(() => {
         }
     });
 
-    ipcMain.handle('secure-clear-token', async () => {
+    handleTrusted('secure-clear-token', async () => {
         try {
+            setSessionToken(null); tracker.clearTrackingData();
             inMemoryTokenFallback = null;
             const tokenPath = path.join(app.getPath('userData'), 'auth.enc');
             if (fs.existsSync(tokenPath)) {
@@ -658,18 +714,19 @@ app.whenReady().then(() => {
     // ── IPC: Shift Status Sync ────────────────────────────────────────────────
     // Renderer sends current shift status on every change so main.js always
     // knows whether the user is working/on_break/stopped before a suspend fires.
-    ipcMain.on('update-shift-status', (_event, status) => {
-        if (typeof status === 'string') {
+    onTrusted('update-shift-status', (_event, status) => {
+        if (['stopped', 'working', 'on_break'].includes(status)) {
             currentShiftStatus = status;
+            if (status !== 'working') { tracker.setTrackingContext({ status }); screenshotScheduler.setTrackingContext({ status }); }
             console.log(`[Sleep] Shift status updated to '${currentShiftStatus}'`);
         }
     });
 
     // ── IPC: Dynamic Idle Threshold (NEW — Admin Portal) ─────────────────────
     // Called by the renderer after login with the admin-set value for this user.
-    ipcMain.on('set-idle-threshold', (_event, seconds) => {
-        // Enforce safe bounds [30s, 600s (10m)] to prevent evasion
-        if (typeof seconds === 'number' && seconds >= 30 && seconds <= 600) {
+    onTrusted('set-idle-threshold', (_event, seconds) => {
+        // Enforce safe bounds [60s, 3600s] to prevent evasion
+        if (typeof seconds === 'number' && Number.isFinite(seconds) && seconds >= 60 && seconds <= 3600) {
             IDLE_THRESHOLD_SECS = Math.round(seconds);
             console.log(`[Idle] Hardware threshold updated to ${IDLE_THRESHOLD_SECS}s`);
         } else {
@@ -677,9 +734,9 @@ app.whenReady().then(() => {
         }
     });
 
-    ipcMain.on('set-wfh-screen-idle-threshold', (_event, seconds) => {
-        // Enforce safe bounds [30s, 600s (10m)]
-        if (typeof seconds === 'number' && seconds >= 30 && seconds <= 600) {
+    onTrusted('set-wfh-screen-idle-threshold', (_event, seconds) => {
+        // Enforce safe bounds [30s, 3600s]
+        if (typeof seconds === 'number' && Number.isFinite(seconds) && seconds >= 30 && seconds <= 3600) {
             const newThreshold = Math.round(seconds);
             const changed = newThreshold !== WFH_SCREEN_IDLE_THRESHOLD_SECS;
             WFH_SCREEN_IDLE_THRESHOLD_SECS = newThreshold;
@@ -697,9 +754,9 @@ app.whenReady().then(() => {
         }
     });
 
-    ipcMain.on('set-screenshot-interval', (_event, seconds) => {
-        // Enforce safe bounds [60s (1m), 900s (15m)]
-        if (typeof seconds === 'number' && seconds >= 60 && seconds <= 900) {
+    onTrusted('set-screenshot-interval', (_event, seconds) => {
+        // Enforce safe bounds [60s, 3600s]
+        if (typeof seconds === 'number' && Number.isFinite(seconds) && seconds >= 60 && seconds <= 3600) {
             screenshotScheduler.setIntervalSecs(Math.round(seconds));
         } else {
             console.warn(`[Screenshot] Rejected out-of-bounds interval: ${seconds}s`);
@@ -707,7 +764,7 @@ app.whenReady().then(() => {
     });
 
 
-    ipcMain.on('set-wfh-config', (_event, config) => {
+    onTrusted('set-wfh-config', (_event, config) => {
         if (config && typeof config === 'object') {
             const newIntervalMs = config.intervalMs ?? wfhConfig.intervalMs;
             const newWidth      = config.width      ?? wfhConfig.width;
@@ -734,7 +791,7 @@ app.whenReady().then(() => {
     // Renderer sends this after every status poll with the active shift's
     // workLocation. 'wfh' activates the screen-change idle monitor; 'office'
     // (or no active shift) leaves the existing input-only monitor in charge.
-    ipcMain.on('set-work-location', (_event, location) => {
+    onTrusted('set-work-location', (_event, location) => {
         const wfh = location === 'wfh';
         if (wfh === isWfhMode) return; // no change — nothing to do
 
@@ -807,7 +864,7 @@ app.whenReady().then(() => {
     //   - a one-time deviceCode (legacy), or
     //   - a full login URL built from its own WEB_BASE (preferred — matches UI label)
     // Website POSTs the session to the backend by that code; desktop polls every 2s.
-    ipcMain.on('open-login', (_event, payload) => {
+    onTrusted('open-login', (_event, payload) => {
         let loginUrlString;
         if (typeof payload === 'string' && /^https?:\/\//i.test(payload)) {
             if (!isAllowedExternalUrl(payload)) {
@@ -830,7 +887,7 @@ app.whenReady().then(() => {
         }
     });
 
-    ipcMain.on('open-dashboard', (_event, payload) => {
+    onTrusted('open-dashboard', (_event, payload) => {
         const dashboardUrl = (typeof payload === 'string' && /^https?:\/\//i.test(payload))
             ? payload
             : new URL('/dashboard', WEB_BASE).toString();
@@ -843,7 +900,7 @@ app.whenReady().then(() => {
         }
     });
 
-    ipcMain.on('restart-app', () => {
+    onTrusted('restart-app', () => {
         if (currentShiftStatus !== 'stopped') {
             sendOtaStatus('Clock out before installing update.');
             return;
@@ -924,6 +981,7 @@ app.whenReady().then(() => {
     // is still available at this point, whereas the renderer's async HTTP
     // call often fails after the network drops during suspend.
     powerMonitor.on('suspend', async () => {
+        tracker.setPaused(true); screenshotScheduler.setPaused(true);
         console.log('[Sleep] System suspending');
 
         // Only auto-break if the user is actively working and below limit.
@@ -944,6 +1002,7 @@ app.whenReady().then(() => {
     });
 
     powerMonitor.on('resume', async () => {
+        tracker.setPaused(false); screenshotScheduler.setPaused(false);
         console.log('[Sleep] System resumed from sleep');
 
         let ok = false;

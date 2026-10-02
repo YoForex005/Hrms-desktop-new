@@ -16,8 +16,8 @@ interface LoginPageProps {
     onLogin: (user: User, token: string) => void;
 }
 
-import { API_BASE, WEB_BASE } from '../config';
-import { setAuthToken } from '../api';
+import { WEB_BASE } from '../config';
+import { setAuthToken, apiRequest } from '../api';
 
 interface DesktopSessionPayload extends User {
     token: string;
@@ -28,9 +28,15 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
     const deviceCode = useRef<string>(crypto.randomUUID());
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const sessionConsumedRef = useRef(false);
+    const secretRef = useRef('');
+    const expiresAtRef = useRef(0);
+    const pollInFlightRef = useRef(false);
+    const initializingRef = useRef(false);
 
     const [waiting, setWaiting] = useState(false);
     const [expired, setExpired] = useState(false);
+    const [initializing, setInitializing] = useState(false);
+    const [error, setError] = useState('');
 
     const clearPolling = useCallback(() => {
         if (pollRef.current) {
@@ -53,12 +59,12 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                 companyId: data.companyId,
                 companyName: data.companyName,
                 companyLogoUrl: data.companyLogoUrl ?? null,
+                timezone: data.timezone,
             };
 
-            localStorage.setItem('wf_user', JSON.stringify(user));
 
             const threshold = data.idleThresholdSecs ?? 60;
-            localStorage.setItem('wf_idle_threshold', String(threshold));
+
 
             const api = window.electronAPI as {
                 setIdleThreshold?: (s: number) => void;
@@ -74,29 +80,33 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
 
     const pollDesktopSession = useCallback(
         async (code: string) => {
-            if (sessionConsumedRef.current) return;
+            if (sessionConsumedRef.current || pollInFlightRef.current || !secretRef.current) return;
+            if (Date.now() >= expiresAtRef.current) { clearPolling(); setExpired(true); setWaiting(false); return; }
+            pollInFlightRef.current = true;
             try {
-                const res = await fetch(`${API_BASE}/auth/desktop-session/${code}`);
+                const res = await apiRequest(`/auth/desktop-session/${code}`, { headers: { 'x-pairing-secret': secretRef.current } });
+                if (code !== deviceCode.current) return;
                 if (res.status === 404) return;
-                if (res.status === 410) {
+                if ([400, 403, 410].includes(res.status)) {
                     clearPolling();
+                    setError(res.status === 410 ? 'Login session expired. Please try again.' : 'Pairing could not be verified. Please try again.');
                     setExpired(true);
                     setWaiting(false);
                     return;
                 }
                 if (!res.ok) return;
                 const data = (await res.json()) as DesktopSessionPayload;
-                completeLogin(data);
+                if (typeof data.token !== 'string' || !data.token || typeof data.id !== 'string') throw new Error('Invalid session response');
+                if (code === deviceCode.current) completeLogin(data);
             } catch {
-                // Retry on next tick.
-            }
+                // Retry within the fixed pairing deadline.
+            } finally { pollInFlightRef.current = false; }
         },
         [clearPolling, completeLogin]
     );
 
     useEffect(() => {
         if (!waiting) return;
-        setExpired(false);
         sessionConsumedRef.current = false;
         const code = deviceCode.current;
         // First check immediately, then poll every 2s
@@ -122,8 +132,30 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         return () => api.removeAuthCallbackListeners?.();
     }, [waiting, expired, pollDesktopSession]);
 
-    const handleOpenBrowser = () => {
+    const handleOpenBrowser = async () => {
+        if (initializingRef.current) return;
+        initializingRef.current = true;
+        setInitializing(true);
+        setError('');
+        // Each attempt gets a fresh challenge, including retries after a network error.
+        deviceCode.current = crypto.randomUUID();
         const code = deviceCode.current;
+        try {
+            const deviceId = await window.electronAPI?.getDeviceId?.();
+            if (!deviceId) throw new Error('Desktop device identity is unavailable. Restart the app and try again.');
+            const response = await apiRequest('/auth/desktop-session/init', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, deviceId }) });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || 'Unable to start login');
+            if (code !== deviceCode.current) return;
+            if (!/^[a-f0-9]{64}$/.test(data.secret) || typeof data.expiresAt !== 'number' || data.expiresAt <= Date.now()) throw new Error('Invalid pairing response');
+            secretRef.current = data.secret; expiresAtRef.current = data.expiresAt;
+        } catch (cause) {
+            if (code === deviceCode.current) setError(cause instanceof Error ? cause.message : 'Unable to start login. Check your connection and try again.');
+            return;
+        } finally {
+            initializingRef.current = false;
+            setInitializing(false);
+        }
         // Always build URL from renderer WEB_BASE so UI label and browser match
         // (avoids production emptrakr.com when main-process config is stale).
         const loginUrl =
@@ -135,7 +167,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         } else {
             window.open(loginUrl, '_blank');
         }
-        console.log('[Auth] Opening browser login:', loginUrl, 'API_BASE=', API_BASE);
+        console.log('[Auth] Opening browser login');
         sessionConsumedRef.current = false;
         setExpired(false);
         setWaiting(true);
@@ -143,10 +175,11 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
 
     const handleRetry = () => {
         clearPolling();
-        deviceCode.current = crypto.randomUUID();
+        deviceCode.current = crypto.randomUUID(); secretRef.current = ''; expiresAtRef.current = 0;
         sessionConsumedRef.current = false;
         setExpired(false);
         setWaiting(false);
+        setError('');
     };
 
     return (
@@ -154,7 +187,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
             <div className="login-card" style={{ textAlign: 'center', maxWidth: 380, background: 'rgba(255, 255, 255, 0.65)', backdropFilter: 'blur(24px)', border: '1px solid rgba(255,255,255,0.8)' }}>
                 <div className="login__brand">
                     <img
-                        src="/logo.png"
+                        src="./logo.png"
                         alt="EmpTrakr logo"
                         style={{
                             width: 150,
@@ -169,10 +202,11 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                     <p>Time Tracker Widget</p>
                 </div>
 
+                {error && !expired && <p role="alert" style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
                 {expired ? (
                     <>
                         <div style={{ fontSize: 13, color: 'var(--danger)', margin: '0 0 18px' }}>
-                            Login session expired (5 minutes). Please try again.
+                            {error || 'Login session expired (5 minutes). Please try again.'}
                         </div>
                         <button
                             id="btn-retry-login"
@@ -213,10 +247,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                                 padding: '6px 12px',
                                 cursor: 'pointer',
                             }}
-                            onClick={() => {
-                                clearPolling();
-                                setWaiting(false);
-                            }}
+                            onClick={handleRetry}
                         >
                             Cancel
                         </button>
@@ -239,6 +270,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                             id="btn-open-login"
                             className="btn btn-primary"
                             onClick={handleOpenBrowser}
+                            disabled={initializing}
                             style={{ width: '100%', justifyContent: 'center', gap: 8, fontSize: 15 }}
                         >
                             <svg
@@ -255,7 +287,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                                 <polyline points="15 3 21 3 21 9" />
                                 <line x1="10" y1="14" x2="21" y2="3" />
                             </svg>
-                            Open Login in Browser
+                            {initializing ? 'Starting login...' : 'Open Login in Browser'}
                         </button>
 
                         <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 14 }}>

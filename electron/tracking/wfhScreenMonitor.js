@@ -83,11 +83,15 @@ function pixelDiffFraction(bufA, bufB, tolerance = 8) {
 
 async function captureAndCheck() {
     try {
+        const online = require('./onlineState.cjs');
+        if (!online.isOnline()) { _lastBitmaps.clear(); return; }
+        const revision = online.snapshot().revision;
         const sources = await desktopCapturer.getSources({
             types: ['screen'],
             thumbnailSize: { width: THUMB_W, height: THUMB_H },
         });
 
+        if (!online.isOnline() || online.snapshot().revision !== revision) { _lastBitmaps.clear(); return; }
         if (!sources || sources.length === 0) return;
 
         let anyScreenChanged = false;

@@ -45,115 +45,61 @@ function executePowerShell(script) {
     });
 }
 
-/**
- * Captures screenshot directly into an in-memory Buffer using Electron's native
- * desktopCapturer API (DirectX / ScreenCaptureKit). This eliminates spawning external
- * PowerShell processes, prevents antivirus/EDR flags, and avoids writing sensitive
- * unencrypted image files to the OS temporary directory.
- */
-async function captureCurrentMonitorPng() {
-    // ── 1. Native In-Memory Capture via Electron desktopCapturer ─────────────
-    try {
-        if (desktopCapturer) {
-            const primaryDisplay = screen ? screen.getPrimaryDisplay() : null;
-            const bounds = primaryDisplay ? primaryDisplay.bounds : { width: 1920, height: 1080 };
-            const sources = await desktopCapturer.getSources({
-                types: ['screen'],
-                thumbnailSize: {
-                    width: bounds.width || 1920,
-                    height: bounds.height || 1080,
-                },
-            });
 
-            if (sources && sources.length > 0) {
-                // Select primary display or first available monitor
-                const source = sources.find(s => s.id.startsWith('screen:0')) || sources[0];
-                const imageBuffer = source.thumbnail.toPNG();
-                const size = source.thumbnail.getSize();
-
-                if (imageBuffer && imageBuffer.length > 0) {
-                    return {
-                        imageBuffer,
-                        display: {
-                            width: size.width || bounds.width || 0,
-                            height: size.height || bounds.height || 0,
-                            x: bounds.x || 0,
-                            y: bounds.y || 0,
-                        },
-                    };
-                }
-            }
-        }
-    } catch (nativeErr) {
-        console.warn('[ScreenshotCapture] Native desktopCapturer failed, trying OS fallback:', nativeErr?.message);
-    }
-
-    // ── 2. Fallbacks (macOS screencapture / Windows PowerShell) ───────────────
-    if (process.platform === 'darwin') {
-        const { execFile: execFileMac } = require('child_process');
-        const path = require('path');
-        const os = require('os');
-        const fs = require('fs/promises');
-
-        const timestamp = Date.now();
-        const tmpPath = path.join(os.tmpdir(), `wf_shot_${timestamp}.png`);
-
-        return new Promise((resolve, reject) => {
-            execFileMac('screencapture', ['-x', '-C', '-m', tmpPath], async (err, _stdout, stderr) => {
-                if (err) {
-                    return reject(new Error('macOS screenshot failed: ' + (stderr || err.message)));
-                }
-                try {
-                    await new Promise(r => setTimeout(r, 400));
-                    let imageBuffer;
-                    try {
-                        imageBuffer = await fs.readFile(tmpPath);
-                    } catch (readErr) {
-                        const fallbackPath = path.join(os.tmpdir(), `wf_shot_${timestamp} 1.png`);
-                        imageBuffer = await fs.readFile(fallbackPath);
-                        await fs.unlink(fallbackPath).catch(() => {});
-                    }
-                    await fs.unlink(tmpPath).catch(() => {});
-                    resolve({
-                        imageBuffer,
-                        display: { width: 0, height: 0, x: 0, y: 0 }
-                    });
-                } catch (e) {
-                    reject(new Error('Failed to read mac screenshot: ' + e.message));
-                }
-            });
-        });
-    }
-
-    const raw = await executePowerShell(PS_CAPTURE_SCRIPT);
-    if (!raw) {
-        throw new Error('Screenshot capture returned empty output');
-    }
-
-    let parsed;
-    try {
-        parsed = JSON.parse(raw);
-    } catch (err) {
-        throw new Error(`Screenshot metadata parse failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
-    }
-
-    const base64Data = parsed?.base64;
-    if (!base64Data || typeof base64Data !== 'string') {
-        throw new Error('Screenshot capture metadata missing image payload');
-    }
-
-    const imageBuffer = Buffer.from(base64Data, 'base64');
-    return {
-        imageBuffer,
-        display: {
-            width: Number(parsed.width) || 0,
-            height: Number(parsed.height) || 0,
-            x: Number(parsed.x) || 0,
-            y: Number(parsed.y) || 0,
-        },
-    };
+function boundedImage(image) {
+    let bytes = image.toPNG();
+    if (bytes.length > 5 * 1024 * 1024) bytes = image.toJPEG(75);
+    if (!bytes.length || bytes.length > 5 * 1024 * 1024) throw new Error('Screenshot exceeds upload size limit');
+    return bytes;
 }
-
-module.exports = {
-    captureCurrentMonitorPng,
-};
+async function captureAllMonitorsPng() {
+    try {
+        const displays = screen.getAllDisplays();
+        if (!displays.length) throw new Error('No displays available');
+        const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: {
+            width: Math.max(...displays.map(display => Math.round(display.bounds.width * display.scaleFactor))),
+            height: Math.max(...displays.map(display => Math.round(display.bounds.height * display.scaleFactor))),
+        } });
+        return displays.map(display => {
+            const source = sources.find(source => String(source.display_id) === String(display.id));
+            if (!source || source.thumbnail.isEmpty()) throw new Error('A display could not be captured');
+            const size = source.thumbnail.getSize();
+            return { imageBuffer: boundedImage(source.thumbnail), display: { ...display.bounds, width: size.width, height: size.height, displayId: String(display.id) } };
+        });
+    } catch (error) { console.warn('[ScreenshotCapture] Native capture unavailable:', error.message); }
+    if (process.platform === 'darwin') {
+        const path = require('node:path'), os = require('node:os'), fs = require('node:fs/promises');
+        const { nativeImage } = require('electron');
+        const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'emptrakr-capture-'));
+        try {
+            await fs.chmod(directory, 0o700);
+            const displays = screen.getAllDisplays();
+            const captures = [];
+            for (let index = 0; index < displays.length; index++) {
+                const imagePath = path.join(directory, 'display-' + index + '.png');
+                await new Promise((resolve, reject) => execFile('screencapture', ['-x', '-C', '-D', String(index + 1), imagePath], { timeout: 15000, windowsHide: true }, error => error ? reject(error) : resolve()));
+                await fs.chmod(imagePath, 0o600);
+                const image = nativeImage.createFromBuffer(await fs.readFile(imagePath));
+                const size = image.getSize();
+                // OS numbering cannot reliably be equated with Electron display IDs.
+                captures.push({ imageBuffer: boundedImage(image), display: { ...size, x: 0, y: 0, displayId: 'os-display-' + (index + 1) } });
+            }
+            if (!captures.length) throw new Error('No displays available');
+            return captures;
+        } finally { await fs.rm(directory, { recursive: true, force: true }); }
+    }
+    if (process.platform !== 'win32') throw new Error('Native display capture is unavailable');
+    const raw = await executePowerShell(PS_CAPTURE_SCRIPT);
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.base64 !== 'string' || !parsed.base64) throw new Error('Screenshot payload missing');
+    const { nativeImage } = require('electron');
+    return [{ imageBuffer: boundedImage(nativeImage.createFromBuffer(Buffer.from(parsed.base64, 'base64'))), display: {
+        width: Number(parsed.width), height: Number(parsed.height), x: Number(parsed.x), y: Number(parsed.y), displayId: 'virtual-screen',
+    } }];
+}
+async function captureCurrentMonitorPng() {
+    const captures = await captureAllMonitorsPng();
+    const primaryId = String(screen.getPrimaryDisplay().id);
+    return captures.find(capture => capture.display.displayId === primaryId) || captures[0];
+}
+module.exports = { captureCurrentMonitorPng, captureAllMonitorsPng };
