@@ -33,4 +33,3 @@ test('desktop API bridge restricts routes and methods', () => {
     validateRequest({ path: '/time/idle/start', method: 'POST' });
     validateRequest({ path: '/auth/me' });
 });
-
