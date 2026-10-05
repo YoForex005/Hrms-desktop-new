@@ -46,8 +46,10 @@ test('storage retry has an independent timer and stop clears both timers and ima
         return { data: { screenshot: { requestId: event.eventId, id: 'storage-id' } } };
     });
     await instance.run();
-    assert.deepEqual([...instance.timers.values()].map(t => t.delay).sort((a, b) => a - b), [2000, 600000]);
-    instance.queue.retryAt = 0; await instance.run(2000);
+    const delays = [...instance.timers.values()].map(t => t.delay).sort((a, b) => a - b);
+    assert.equal(delays[1], 600000);
+    assert.ok(delays[0] > 0 && delays[0] <= 2000, 'retry timer accounts for elapsed scheduling time');
+    instance.queue.retryAt = 0; await instance.run(delays[0]);
     assert.equal(instance.captures(), 1); assert.equal(instance.queue.items.length, 0);
     assert.ok(instance.api.getHealth().lastSuccessAt);
     instance.api.stop(); assert.equal(instance.timers.size, 0); online.disconnect();

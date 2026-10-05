@@ -1,6 +1,7 @@
 const { resolveConfig } = require('./config.cjs');
 function validateBackend(status, body) {
-    if (status !== 200 || body?.status !== 'ok' || body.trackingProtocol !== 'online-v1') {
+    if (status !== 200 || body?.status !== 'ok' || body.trackingProtocol !== 'online-v2'
+        || body.attendanceCommands !== true || body.pairingAcknowledgement !== true) {
         throw new Error(`Backend is not ready for online-only tracking (HTTP ${status})`);
     }
 }

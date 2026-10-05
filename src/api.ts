@@ -180,8 +180,7 @@ export async function startShift(workLocation: 'wfh' | 'office') {
 }
 
 export async function toggleBreak() {
-    const res = await apiRequest(`/time/break`, { method: 'POST', headers: authHeaders() });
-    return handleResponse(res);
+    throw new Error('Break toggling is retired; use an explicit start or end action');
 }
 
 export type BreakSource = 'manual' | 'screen_lock' | 'sleep';

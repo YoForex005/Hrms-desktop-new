@@ -5,8 +5,8 @@ function validateRequest(request) {
     const pathname = String(request?.path || '').split('?')[0];
     const allowed = method === 'GET'
         ? /^\/(auth\/me|auth\/desktop-session\/[a-f0-9-]{36}|time\/(status|history|idle\/today)|idle\/today)$/.test(pathname)
-        : method === 'POST' && /^\/(auth\/(login|logout|desktop-session\/init)|time\/(start|stop|heartbeat|rollover|disconnect-intent|break|break\/(start|end)|idle\/(start|end))|idle\/(start|end))$/.test(pathname);
-    if (!allowed || request.path.includes('..') || request.path.includes('#') || request.path.includes('\\') || Buffer.byteLength(String(request.body || '')) > 65536) throw new Error('Unsupported API request');
+        : method === 'POST' && /^\/(auth\/(login|logout|desktop-session\/init|desktop-session\/[a-f0-9-]{36}\/ack)|time\/(start|stop|heartbeat|rollover|disconnect-intent|break\/(start|end)|idle\/(start|end))|idle\/(start|end))$/.test(pathname);
+    if (!allowed || request.path.includes('..') || request.path.includes('#') || request.path.includes('\\') || Buffer.byteLength(typeof request.body === 'string' ? request.body : JSON.stringify(request.body || {})) > 65536) throw new Error('Unsupported API request');
     return { method, path: request.path };
 }
 async function requestApi(base, token, request) {

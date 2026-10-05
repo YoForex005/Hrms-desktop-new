@@ -47,10 +47,13 @@ function executePowerShell(script) {
 
 
 function boundedImage(image) {
+    const { width, height } = image.getSize();
+    const scale = Math.min(1, 8000 / width, 8000 / height, Math.sqrt(25000000 / (width * height)));
+    if (scale < 1) image = image.resize({ width: Math.max(1, Math.floor(width * scale)), height: Math.max(1, Math.floor(height * scale)), quality: 'good' });
     let bytes = image.toPNG();
     if (bytes.length > 5 * 1024 * 1024) bytes = image.toJPEG(75);
     if (!bytes.length || bytes.length > 5 * 1024 * 1024) throw new Error('Screenshot exceeds upload size limit');
-    return bytes;
+    return { bytes, size: image.getSize() };
 }
 async function captureAllMonitorsPng() {
     try {
@@ -63,8 +66,8 @@ async function captureAllMonitorsPng() {
         return displays.map(display => {
             const source = sources.find(source => String(source.display_id) === String(display.id));
             if (!source || source.thumbnail.isEmpty()) throw new Error('A display could not be captured');
-            const size = source.thumbnail.getSize();
-            return { imageBuffer: boundedImage(source.thumbnail), display: { ...display.bounds, width: size.width, height: size.height, displayId: String(display.id) } };
+            const { bytes, size } = boundedImage(source.thumbnail);
+            return { imageBuffer: bytes, display: { ...display.bounds, width: size.width, height: size.height, displayId: String(display.id) } };
         });
     } catch (error) { console.warn('[ScreenshotCapture] Native capture unavailable:', error.message); }
     if (process.platform === 'darwin') {
@@ -80,9 +83,9 @@ async function captureAllMonitorsPng() {
                 await new Promise((resolve, reject) => execFile('screencapture', ['-x', '-C', '-D', String(index + 1), imagePath], { timeout: 15000, windowsHide: true }, error => error ? reject(error) : resolve()));
                 await fs.chmod(imagePath, 0o600);
                 const image = nativeImage.createFromBuffer(await fs.readFile(imagePath));
-                const size = image.getSize();
+                const { bytes, size } = boundedImage(image);
                 // OS numbering cannot reliably be equated with Electron display IDs.
-                captures.push({ imageBuffer: boundedImage(image), display: { ...size, x: 0, y: 0, displayId: 'os-display-' + (index + 1) } });
+                captures.push({ imageBuffer: bytes, display: { ...size, x: 0, y: 0, displayId: 'os-display-' + (index + 1) } });
             }
             if (!captures.length) throw new Error('No displays available');
             return captures;
@@ -93,8 +96,9 @@ async function captureAllMonitorsPng() {
     const parsed = JSON.parse(raw);
     if (typeof parsed.base64 !== 'string' || !parsed.base64) throw new Error('Screenshot payload missing');
     const { nativeImage } = require('electron');
-    return [{ imageBuffer: boundedImage(nativeImage.createFromBuffer(Buffer.from(parsed.base64, 'base64'))), display: {
-        width: Number(parsed.width), height: Number(parsed.height), x: Number(parsed.x), y: Number(parsed.y), displayId: 'virtual-screen',
+    const { bytes, size } = boundedImage(nativeImage.createFromBuffer(Buffer.from(parsed.base64, 'base64')));
+    return [{ imageBuffer: bytes, display: {
+        width: size.width, height: size.height, x: Number(parsed.x), y: Number(parsed.y), displayId: 'virtual-screen',
     } }];
 }
 async function captureCurrentMonitorPng() {

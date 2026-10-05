@@ -10,6 +10,7 @@ test('release gate enforces an eligible matching package, lockfile and tag', () 
     for (const change of [{ tag: 'v1.2.31' }, { lockVersion: '1.2.29' }, { latestTag: 'v1.2.30' }, { latestTag: 'v1.3.0' }]) assert.throws(() => validateRelease({ ...release, ...change }));
 });
 test('release gate rejects missing readiness and older tracking protocols', () => {
-    validateBackend(200, { status: 'ok', trackingProtocol: 'online-v1' });
+    validateBackend(200, { status: 'ok', trackingProtocol: 'online-v2', attendanceCommands: true, pairingAcknowledgement: true });
+    assert.throws(() => validateBackend(200, { status: 'ok', trackingProtocol: 'online-v1' }));
     for (const [status, body] of [[404, null], [503, { status: 'ok' }], [200, { status: 'ok' }]]) assert.throws(() => validateBackend(status, body));
 });

@@ -19,7 +19,7 @@ import { getDateKeyInTimeZone, getUtcDayBounds } from '../timezones';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
     getStatus, startShift, startBreak, endBreak, stopShift, getHistory, sendHeartbeat,
-    startIdleSession, endIdleSession, getTodayIdleSecs,
+    endIdleSession, getTodayIdleSecs,
     rolloverShift,
     type BreakSource,
 } from '../api';
@@ -47,7 +47,7 @@ declare global {
         electronAPI?: {
             config?: { API_BASE: string; WEB_BASE: string };
             requestApi?: (input: { path: string; method: string; body?: BodyInit | null; headers: Record<string, string> }) => Promise<{ body: string; status: number; headers: Record<string, string> }>;
-            secureStoreToken: (token: string) => Promise<void>;
+            secureStoreToken: (token: string) => Promise<{ ok: boolean; encrypted?: boolean; memoryOnly?: boolean; error?: string }>;
             secureClearToken: () => Promise<void>;
             secureGetToken: () => Promise<string | null>;
             getDeviceId?: () => Promise<string>;
@@ -167,7 +167,6 @@ export function useTimer() {
     // a screen lock event. Only in this case do we auto-resume work on unlock.
     // Manual breaks (user clicked "Take Break") leave this as false, so they
     // are NEVER auto-ended on unlock.
-    const lockBreakRef = useRef(false);
 
     // ── Tick: forces re-render every second when shift is active ──────────────
     const [nowMs, setNowMs] = useState(() => Date.now());
@@ -544,38 +543,8 @@ export function useTimer() {
         if (!api) return; // Running in browser (dev mode without Electron)
 
         // Called by Electron when user has been idle for ≥60 seconds
-        api.onIdleStart(async (idleStartTime: string) => {
-            // Only track idle during active work — never during a break
-            if (status !== 'working') return;
-
-            console.log('[Idle] User went idle at:', idleStartTime);
-
-            // Set local start time so the counter ticks every second immediately
-            setIdleSessionStartTime(new Date(idleStartTime));
-
-            // Also persist to backend (fire-and-forget, errors are non-fatal)
-            try {
-                await startIdleSession(idleStartTime);
-            } catch (e) {
-                console.warn('[Idle] Failed to record idle start on server:', e);
-            }
-        });
-
-        // Called by Electron when the user moves their mouse or types again
-        api.onIdleEnd(async () => {
-            console.log('[Idle] User became active again');
-
-            // Clear the local timer — the session is over
-            setIdleSessionStartTime(null);
-
-            // Fetch updated closed total from backend, then persist the session end
-            try {
-                await endIdleSession();
-                await fetchIdleSecs(); // re-sync closed total so counter is accurate
-            } catch (e) {
-                console.warn('[Idle] Failed to record idle end on server:', e);
-            }
-        });
+        api.onIdleStart((idleStartTime: string) => { setIdleSessionStartTime(new Date(idleStartTime)); });
+        api.onIdleEnd(() => { setIdleSessionStartTime(null); void fetchIdleSecs(); });
 
         // Cleanup listeners when component unmounts or status changes
         return () => api.removeIdleListeners();
@@ -592,49 +561,8 @@ export function useTimer() {
         const api = window.electronAPI;
         if (!api) return;
 
-        api.onScreenLocked(async () => {
-            console.log('[ScreenLock] Screen locked');
-
-            // Only auto-break if the user is currently working (not already on break or stopped)
-            if (status !== 'working') return;
-
-            // Close any open idle session first — the break covers this time now
-            setIdleSessionStartTime(null);
-            await endIdleSession().catch(() => { /* No idle session open — safe to ignore */ });
-
-            console.log('[ScreenLock] Auto-starting break due to screen lock');
-            try {
-                const result = await startBreak('screen_lock');
-                lockBreakRef.current = result.break?.source === 'screen_lock';
-                await fetchStatus();
-                await fetchHistory();
-            } catch (e) {
-                console.warn('[ScreenLock] Failed to start break on screen lock:', e);
-                lockBreakRef.current = false; // reset flag if the API call failed
-            }
-        });
-
-        api.onScreenUnlocked(async () => {
-            console.log('[ScreenLock] Screen unlocked');
-
-            // Only auto-resume if THIS break was started by a screen lock
-            if (!lockBreakRef.current) {
-                console.log('[ScreenLock] Break was not lock-initiated — leaving break running');
-                return;
-            }
-
-            // Clear the flag before the API call to avoid double-triggering
-            lockBreakRef.current = false;
-
-            console.log('[ScreenLock] Auto-ending break due to screen unlock');
-            try {
-                await endBreak({ source: 'screen_lock' });
-                await fetchStatus();
-                await fetchHistory();
-            } catch (e) {
-                console.warn('[ScreenLock] Failed to end break on screen unlock:', e);
-            }
-        });
+        api.onScreenLocked(() => { setIdleSessionStartTime(null); void fetchStatus(); });
+        api.onScreenUnlocked(() => { void fetchStatus(); void fetchHistory(); });
 
         return () => api.removeScreenListeners();
     }, [status, fetchStatus, fetchHistory]);
@@ -696,7 +624,7 @@ export function useTimer() {
     // Break limit is per shift, so only the current shift's breaks count here.
     // This lets an admin increase Max Breaks Per Shift and have the button
     // unlock on the next status poll without old shifts from today blocking it.
-    const todayBreaksCount = currentShift?.breaks.length ?? 0;
+    const todayBreaksCount = currentShift?.breaks.filter(b => !b.source || b.source === 'manual').length ?? 0;
 
 
     // ── Active shift contribution (recalculated every second via tick) ──────────

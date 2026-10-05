@@ -33,3 +33,27 @@ test('macOS fallback uses a private directory, has a deadline and cleans up on f
     assert.deepEqual(permissions, [['/tmp/private', 0o700]]);
     assert.deepEqual(removed, ['/tmp/private']);
 });
+
+test('8K capture fits server pixel and byte limits and reports encoded dimensions', async () => {
+    const display = { id: 1, scaleFactor: 1, bounds: { width: 7680, height: 4320, x: 0, y: 0 } };
+    let encodedSize;
+    const image = {
+        isEmpty: () => false,
+        getSize: () => ({ width: 7680, height: 4320 }),
+        resize(options) {
+            encodedSize = { width: options.width, height: options.height };
+            return { getSize: () => encodedSize, toPNG: () => Buffer.alloc(6 * 1024 * 1024), toJPEG: quality => {
+                assert.equal(quality, 75); return Buffer.alloc(1000);
+            } };
+        },
+    };
+    const capture = load({ screen: { getAllDisplays: () => [display] }, desktopCapturer: {
+        getSources: async () => [{ display_id: '1', thumbnail: image }],
+    } }, 'win32', { child_process: {} });
+    const [result] = await capture.captureAllMonitorsPng();
+    assert.ok(result.display.width * result.display.height <= 25_000_000);
+    assert.ok(result.display.width <= 8000 && result.display.height <= 8000);
+    assert.equal(result.display.width, encodedSize.width);
+    assert.equal(result.display.height, encodedSize.height);
+    assert.equal(result.imageBuffer.length, 1000);
+});

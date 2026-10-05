@@ -127,6 +127,33 @@ let backendProcess = null;
 let pendingAuthCallbackUrl = null;
 let sessionAuthToken = null;
 let attendanceRevision = 0;
+const attendance = new (require('./attendanceCoordinator.cjs').AttendanceCoordinator)({
+    token: () => sessionAuthToken,
+    transport: (request, token) => require('./apiBridge.cjs').requestApi(API_BASE, token, request),
+    disconnectedAt: () => online.getDisconnectedAt(),
+    load: () => {
+        const file = path.join(app.getPath('userData'), 'attendance-intent.enc');
+        if (!fs.existsSync(file)) return null;
+        if (!safeStorage.isEncryptionAvailable()) throw new Error('Secure attendance storage unavailable');
+        return JSON.parse(safeStorage.decryptString(fs.readFileSync(file)));
+    },
+    save: pending => {
+        const file = path.join(app.getPath('userData'), 'attendance-intent.enc');
+        if (!pending) { if (fs.existsSync(file)) fs.unlinkSync(file); return; }
+        if (!safeStorage.isEncryptionAvailable()) throw new Error('Secure attendance storage unavailable');
+        const temporary = file + '.new';
+        fs.writeFileSync(temporary, safeStorage.encryptString(JSON.stringify(pending)), { mode: 0o600 });
+        fs.renameSync(temporary, file);
+    },
+    onState: (state, latency, renewed) => {
+        const context = state.ownedByThisDevice ? state : { status: 'stopped', shift: null };
+        currentShiftStatus = context.status;
+        tracker.setTrackingContext(context); screenshotScheduler.setTrackingContext(context);
+        if (context.shift) online.confirm(state.trackingLease, latency, renewed);
+        else online.disconnect('No shift owned by this device');
+    },
+});
+
 let disconnectIntentSent = false;
 let allowWindowClose = false;
 
@@ -168,55 +195,13 @@ function normalizeAuthToken(token) {
 }
 
 async function sendDisconnectIntent(reason) {
-    if (!sessionAuthToken) return;
-    if (disconnectIntentSent) return;
-
-    disconnectIntentSent = true;
-
+    if (!sessionAuthToken || disconnectIntentSent) return;
     try {
-        await axios.post(
-            `${API_BASE}/time/disconnect-intent`,
-            {
-                reason: reason || 'desktop_exit',
-                disconnectedAt: new Date().toISOString(),
-            },
-            {
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${sessionAuthToken}`,
-                },
-                timeout: 3000,
-            }
-        );
-        console.log('[Session] Disconnect intent sent to backend');
-    } catch (err) {
-        const message = err && err.message ? err.message : 'unknown error';
-        console.warn('[Session] Failed to send disconnect intent:', message);
-    }
+        const response = await attendance.request({ method: 'POST', path: '/time/disconnect-intent', body: JSON.stringify({ reason: reason || 'desktop_exit' }) });
+        disconnectIntentSent = response.status >= 200 && response.status < 300;
+    } catch { console.warn('[Attendance] Disconnect intent remains unacknowledged'); }
 }
 
-async function sendBreakCommand(action, source, context) {
-    if (!sessionAuthToken) return false;
-    try {
-        const response = await axios.post(
-            `${API_BASE}/time/break/${action}`,
-            { source },
-            {
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${sessionAuthToken}`,
-                },
-                timeout: 4000,
-            }
-        );
-        console.log(`[Sleep] Break ${action} sent from main process (${context}, source=${source})`);
-        return response.data || true;
-    } catch (err) {
-        const message = err && err.message ? err.message : 'unknown error';
-        console.warn(`[Sleep] Failed to ${action} break (${context}, source=${source}):`, message);
-        return false;
-    }
-}
 
 // ── OTA Updates (Configuration) ──────────────────────────────────────────────
 
@@ -334,7 +319,7 @@ function startIdlePolling() {
         // Suppress idle tracking while the screen is locked.
         // The break (started by screen-lock) already accounts for this time.
         // Counting idle on top of a lock-break would double-count inactivity.
-        if (isScreenLocked) return;
+        if (isScreenLocked || attendance.sensors.sleeping) return;
 
         const idleSecs = powerMonitor.getSystemIdleTime();
         const inputIdle = idleSecs >= IDLE_THRESHOLD_SECS;
@@ -357,12 +342,14 @@ function startIdlePolling() {
             const idleStartTime = (screenIdleAt < inputIdleStart ? screenIdleAt : inputIdleStart).toISOString();
 
             console.log(`[Idle] User went idle. Input idle: ${idleSecs}s, screen idle: ${screenIdle} (Threshold: ${IDLE_THRESHOLD_SECS}s) started at: ${idleStartTime}`);
+            attendance.setSensors({ idle: true, idleStart: idleStartTime });
             mainWindow.webContents.send('idle-start', idleStartTime);
         }
 
         // ── Transition: Idle → Active ──────────────────────────────────────
         if (!nowIdle && isUserIdle) {
             isUserIdle = false;
+            attendance.setSensors({ idle: false, idleStart: null });
             console.log('[Idle] User became active again');
             mainWindow.webContents.send('idle-end');
         }
@@ -384,6 +371,8 @@ function startIdlePolling() {
  */
 function startScreenLockDetection() {
     powerMonitor.on('lock-screen', () => {
+        attendance.setSensors({ locked: true, idle: false, idleStart: null });
+        void attendance.reconcile().catch(() => {});
         isScreenLocked = true; tracker.setPaused(true); screenshotScheduler.setPaused(true);
 
         // If the user was idle when they locked, clear that state.
@@ -403,6 +392,8 @@ function startScreenLockDetection() {
     });
 
     powerMonitor.on('unlock-screen', () => {
+        attendance.setSensors({ locked: false });
+        void attendance.reconcile().catch(() => {});
         isScreenLocked = false; tracker.setPaused(false); screenshotScheduler.setPaused(false);
         console.log('[ScreenLock] Screen unlocked — notifying renderer to end break');
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -613,9 +604,9 @@ app.whenReady().then(() => {
         if (request.method === 'POST' && request.path?.startsWith('/time/')) ++attendanceRevision;
         const revision = attendanceRevision;
         const bridgeRequest = request.path === '/time/heartbeat' && request.method === 'POST'
-            ? { ...request, body: JSON.stringify({ trackingDisconnectedAt: online.getDisconnectedAt() }) } : request;
+            ? { ...request } : request;
         let response;
-        try { response = await require('./apiBridge.cjs').requestApi(API_BASE, token, bridgeRequest); }
+        try { response = await attendance.request(bridgeRequest); }
         catch (error) { if (token === sessionAuthToken) online.disconnect('Backend connection lost'); throw error; }
         if (token !== sessionAuthToken) return response;
         if (response.status === 401) { setSessionToken(null); tracker.clearTrackingData(); }
@@ -715,11 +706,7 @@ app.whenReady().then(() => {
     // Renderer sends current shift status on every change so main.js always
     // knows whether the user is working/on_break/stopped before a suspend fires.
     onTrusted('update-shift-status', (_event, status) => {
-        if (['stopped', 'working', 'on_break'].includes(status)) {
-            currentShiftStatus = status;
-            if (status !== 'working') { tracker.setTrackingContext({ status }); screenshotScheduler.setTrackingContext({ status }); }
-            console.log(`[Sleep] Shift status updated to '${currentShiftStatus}'`);
-        }
+        if (['stopped', 'working', 'on_break'].includes(status)) void attendance.reconcile().catch(() => {});
     });
 
     // ── IPC: Dynamic Idle Threshold (NEW — Admin Portal) ─────────────────────
@@ -980,47 +967,21 @@ app.whenReady().then(() => {
     // We call the API from main.js (not the renderer) because the network
     // is still available at this point, whereas the renderer's async HTTP
     // call often fails after the network drops during suspend.
-    powerMonitor.on('suspend', async () => {
+    powerMonitor.on('suspend', () => {
+        attendance.setSensors({ sleeping: true });
         tracker.setPaused(true); screenshotScheduler.setPaused(true);
-        console.log('[Sleep] System suspending');
-
-        // Only auto-break if the user is actively working and below limit.
-        // Break limit check is skipped here (backend enforces it anyway and
-        // will return 400 if exceeded — we check the result).
-        if (currentShiftStatus !== 'working') {
-            console.log(`[Sleep] Status is '${currentShiftStatus}' — skipping sleep break`);
-            return;
-        }
-
-        const result = await sendBreakCommand('start', 'sleep', 'suspend');
-        sleepBreakStarted = !!(result && result.break && result.break.source === 'sleep');
-
-        // Also tell the renderer so the UI reflects the break immediately
-        if (sleepBreakStarted && mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('sleep-break-started');
-        }
+        void attendance.reconcile().catch(() => {});
     });
-
-    powerMonitor.on('resume', async () => {
-        tracker.setPaused(false); screenshotScheduler.setPaused(false);
-        console.log('[Sleep] System resumed from sleep');
-
-        let ok = false;
-        if (sleepBreakStarted) {
-            sleepBreakStarted = false;
-            const result = await sendBreakCommand('end', 'sleep', 'resume');
-            ok = !!result;
-        } else {
-            console.log('[Sleep] No sleep break was tracked — re-syncing status from backend');
-        }
-
-        // Always tell renderer to re-sync status from backend to recover
-        // from any orphaned break state (e.g., break started via a different path)
-        if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('sleep-break-ended', ok);
-        }
+    powerMonitor.on('resume', () => {
+        attendance.setSensors({ sleeping: false });
+        tracker.setPaused(isScreenLocked || isUserIdle); screenshotScheduler.setPaused(isScreenLocked || isUserIdle);
+        void attendance.reconcile().catch(() => {});
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('sleep-break-ended', true);
     });
-
+    isScreenLocked = powerMonitor.getSystemIdleState(IDLE_THRESHOLD_SECS) === 'locked';
+    attendance.setSensors({ locked: isScreenLocked });
+    tracker.setPaused(isScreenLocked); screenshotScheduler.setPaused(isScreenLocked);
+    setInterval(() => { void attendance.reconcile().catch(() => {}); }, 3000);
 
     // On Windows/Linux cold-start via protocol, deep link is passed in argv.
     const startupDeepLink = extractDeepLink(process.argv);

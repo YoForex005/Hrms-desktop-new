@@ -24,10 +24,11 @@ test('every renderer attendance action uses the production main-process bridge',
     vm.runInNewContext(javascript, context);
     const api = context.exports;
     for (const action of [() => api.login('user@example.test', 'password'), api.getMe, api.getStatus,
-        () => api.startShift('office'), api.toggleBreak, api.startBreak, api.endBreak, api.stopShift,
+        () => api.startShift('office'), api.startBreak, api.endBreak, api.stopShift,
         api.rolloverShift, api.sendHeartbeat, api.getHistory, () => api.startIdleSession(new Date().toISOString()),
         api.endIdleSession, api.getTodayIdleSecs, api.logoutSession]) await action();
-    assert.equal(calls.length, 15);
+    assert.equal(calls.length, 14);
+    await assert.rejects(api.toggleBreak(), /retired/);
     assert.ok(calls.includes('/time/heartbeat'));
     assert.ok(calls.includes('/auth/logout'));
 });

@@ -97,6 +97,13 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                 if (!res.ok) return;
                 const data = (await res.json()) as DesktopSessionPayload;
                 if (typeof data.token !== 'string' || !data.token || typeof data.id !== 'string') throw new Error('Invalid session response');
+                // Consume delivery only after the OS credential store confirms it.
+                const stored = await window.electronAPI?.secureStoreToken(data.token);
+                if (!stored?.ok || !stored.encrypted) throw new Error('Secure token storage is unavailable');
+                const acknowledgement = await apiRequest(`/auth/desktop-session/${code}/ack`, {
+                    method: 'POST', headers: { 'x-pairing-secret': secretRef.current },
+                });
+                if (!acknowledgement.ok) throw new Error('Pairing delivery was not acknowledged');
                 if (code === deviceCode.current) completeLogin(data);
             } catch {
                 // Retry within the fixed pairing deadline.
