@@ -4,16 +4,16 @@ Electron + React + Vite desktop time tracker.
 
 ## Prerequisites
 
-- **Node.js 20 LTS** recommended (Node 24 works for Electron package install; native modules may need VS C++ Build Tools)
+- **Node.js 22 or 24** (use the latest patch release)
 - Windows: optional **Visual Studio Build Tools** with “Desktop development with C++” if `active-win` / native deps fail to build
 
 ## Setup
 
 ```bash
-npm install
+npm ci
 ```
 
-`postinstall` runs `scripts/ensure-electron.cjs`, which verifies `electron.exe` exists and re-downloads it if the install is broken.
+`postinstall` runs `scripts/ensure-electron.cjs`, which verifies the platform's Electron executable and the macOS runtime framework. Missing or incomplete downloads are repaired using the locked Electron package's `install.js`, without changing dependencies or rebuilding unrelated native modules.
 
 ## Development
 
@@ -35,16 +35,13 @@ Run:
 npm run electron:repair
 ```
 
-Or manually:
+If the Electron npm package itself is missing or does not match the lockfile:
 
 ```bash
-# PowerShell
-Remove-Item -Recurse -Force node_modules\electron
-npm cache clean --force
-# Optional mirror if GitHub downloads fail:
-# $env:ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
-npm install electron --save-dev --foreground-scripts
+npm ci
 ```
+
+`electron:repair` clears only the Electron download output and forces a fresh binary download. If downloading fails, check network access to Electron's GitHub releases or your configured `ELECTRON_MIRROR`, then retry.
 
 ## Scripts
 

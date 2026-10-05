@@ -7,7 +7,7 @@
  *    node_modules/electron and try installing again"
  *
  * This script verifies the binary and re-runs electron's install.js
- * (or a clean reinstall) when broken.
+ * when broken, keeping the installed package and lockfile intact.
  *
  * Usage:
  *   node scripts/ensure-electron.cjs          # check + repair if needed
@@ -23,6 +23,7 @@ const electronDir = path.join(root, 'node_modules', 'electron');
 const pathFile = path.join(electronDir, 'path.txt');
 const installJs = path.join(electronDir, 'install.js');
 const force = process.argv.includes('--force') || process.argv.includes('-f');
+const platform = process.env.ELECTRON_INSTALL_PLATFORM || process.env.npm_config_platform || process.platform;
 
 function log(msg) {
     console.log(`[ensure-electron] ${msg}`);
@@ -52,8 +53,20 @@ function electronBinaryOk() {
     // On Windows, also require a non-tiny executable (corrupt download guard).
     try {
         const stat = fs.statSync(binaryPath);
-        if (stat.size < 1024 * 100) {
+        if (!stat.isFile() || stat.size === 0) {
+            return { ok: false, reason: 'electron binary is not a nonempty file' };
+        }
+        if (platform === 'win32' && stat.size < 1024 * 100) {
             return { ok: false, reason: `binary too small (${stat.size} bytes) — likely corrupt` };
+        }
+        // macOS uses a small launcher; the runtime lives in the framework.
+        if (platform === 'darwin' || platform === 'mas') {
+            const frameworkPath = path.resolve(path.dirname(binaryPath), '..', 'Frameworks',
+                'Electron Framework.framework', 'Electron Framework');
+            const framework = fs.statSync(frameworkPath);
+            if (!framework.isFile() || framework.size < 1024 * 100) {
+                return { ok: false, reason: 'Electron Framework is missing or incomplete' };
+            }
         }
     } catch {
         return { ok: false, reason: 'cannot stat electron binary' };
@@ -78,36 +91,20 @@ function runInstallJs() {
         return false;
     }
     log('Running electron/install.js to download binary…');
-    return run(process.execPath, [installJs]);
-}
-
-function reinstallPackage() {
-    log('Removing broken node_modules/electron…');
+    // Clear only download output so install.js cannot accept a corrupt cached
+    // installation. Never run npm install from postinstall: it can change the
+    // locked version and rebuild unrelated optional native dependencies.
     try {
-        fs.rmSync(electronDir, { recursive: true, force: true });
+        fs.rmSync(path.join(electronDir, 'dist'), { recursive: true, force: true });
+        fs.rmSync(pathFile, { force: true });
     } catch (err) {
-        fail(`Could not remove electron folder: ${err instanceof Error ? err.message : String(err)}`);
+        fail(`Could not clear Electron download: ${err instanceof Error ? err.message : String(err)}`);
     }
-
-    log('Reinstalling electron package (with postinstall)…');
-    // Prefer exact version already declared in package.json when possible.
-    const ok = run('npm', [
-        'install',
-        'electron',
-        '--save-dev',
-        '--no-audit',
-        '--no-fund',
-        '--foreground-scripts',
-    ]);
-    if (!ok) {
-        fail(
-            'npm install electron failed.\n' +
-            '  Try:\n' +
-            '    npm cache clean --force\n' +
-            '    $env:ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"   # PowerShell\n' +
-            '    npm install electron --save-dev --foreground-scripts'
-        );
-    }
+    return run(process.execPath, [installJs], {
+        shell: false,
+        windowsHide: true,
+        env: { ...process.env, ...(force ? { force_no_cache: 'true' } : {}) },
+    });
 }
 
 function main() {
@@ -123,30 +120,18 @@ function main() {
         log(`Broken install: ${check.reason}`);
     }
 
-    // First try the lightweight path: just re-download the binary.
-    if (fs.existsSync(installJs) && !force) {
-        if (runInstallJs()) {
-            const after = electronBinaryOk();
-            if (after.ok) {
-                log(`Repaired via install.js — ${after.binaryPath}`);
-                process.exit(0);
-            }
-            log(`install.js finished but binary still invalid: ${after.reason}`);
-        } else {
-            log('install.js failed; falling back to full reinstall.');
-        }
+    if (!fs.existsSync(installJs)) {
+        fail('Electron installer is missing. Run npm ci to restore the locked package.');
     }
-
-    reinstallPackage();
+    if (!runInstallJs()) {
+        fail('Electron binary download failed. Check network access to Electron releases, then retry npm run electron:repair.');
+    }
 
     const final = electronBinaryOk();
     if (!final.ok) {
         fail(
-            `Electron still broken after reinstall (${final.reason}).\n` +
-            '  Manual fix:\n' +
-            '    1. Remove-Item -Recurse -Force node_modules\\electron\n' +
-            '    2. npm cache clean --force\n' +
-            '    3. npm install electron --save-dev --foreground-scripts'
+            `Electron still broken after download (${final.reason}).\n` +
+            '  Check network access to Electron releases, then retry npm run electron:repair.'
         );
     }
 
