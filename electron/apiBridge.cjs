@@ -19,9 +19,29 @@ async function requestApi(base, token, request) {
         headers['x-pairing-secret'] = secret;
     }
     const sentAt = performance.now();
-    const response = await axios({ url: base + path, method, headers, data: request.body,
-        timeout: 15000, signal: AbortSignal.timeout(20000), maxRedirects: 0,
-        maxContentLength: 2 * 1024 * 1024, validateStatus: () => true, responseType: 'text' });
+    let response;
+    try {
+        response = await axios({ url: base + path, method, headers, data: request.body,
+            timeout: 15000, signal: AbortSignal.timeout(20000), maxRedirects: 0,
+            maxContentLength: 2 * 1024 * 1024, validateStatus: () => true, responseType: 'text' });
+    } catch (error) {
+        // Electron logs rejected IPC errors. Axios errors retain authorization
+        // headers, pairing secrets and request bodies, including in their cause.
+        const messages = {
+            ECONNREFUSED: 'Cannot connect to the backend. Check that the API server is running.',
+            ECONNABORTED: 'The backend request timed out. Please try again.',
+            ETIMEDOUT: 'The backend request timed out. Please try again.',
+            ERR_CANCELED: 'The backend request timed out or was cancelled. Please try again.',
+            ENOTFOUND: 'Cannot resolve the backend address. Check your connection and API settings.',
+            EAI_AGAIN: 'Cannot resolve the backend address. Please try again.',
+            ECONNRESET: 'The backend connection was interrupted. Please try again.',
+        };
+        const code = Object.hasOwn(messages, error?.code) ? error.code : 'BACKEND_REQUEST_FAILED';
+        const safeError = new Error(messages[code] || 'The backend request failed. Check your connection and try again.');
+        safeError.name = 'BackendConnectionError';
+        safeError.code = code;
+        throw safeError;
+    }
     return { status: response.status, roundTripMs: performance.now() - sentAt, body: typeof response.data === 'string' ? response.data : JSON.stringify(response.data),
         headers: { 'content-type': response.headers['content-type'] || 'application/json' } };
 }
