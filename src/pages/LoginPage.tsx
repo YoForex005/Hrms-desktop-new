@@ -30,6 +30,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
     const sessionConsumedRef = useRef(false);
     const secretRef = useRef('');
     const expiresAtRef = useRef(0);
+    const pendingAcknowledgementRef = useRef<{ code: string; data: DesktopSessionPayload } | null>(null);
     const pollInFlightRef = useRef(false);
     const initializingRef = useRef(false);
 
@@ -84,27 +85,38 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
             if (Date.now() >= expiresAtRef.current) { clearPolling(); setExpired(true); setWaiting(false); return; }
             pollInFlightRef.current = true;
             try {
-                const res = await apiRequest(`/auth/desktop-session/${code}`, { headers: { 'x-pairing-secret': secretRef.current } });
-                if (code !== deviceCode.current) return;
-                if (res.status === 404) return;
-                if ([400, 403, 410].includes(res.status)) {
-                    clearPolling();
-                    setError(res.status === 410 ? 'Login session expired. Please try again.' : 'Pairing could not be verified. Please try again.');
-                    setExpired(true);
-                    setWaiting(false);
-                    return;
+                let data = pendingAcknowledgementRef.current?.code === code
+                    ? pendingAcknowledgementRef.current.data : null;
+                if (!data) {
+                    const res = await apiRequest(`/auth/desktop-session/${code}`, { headers: { 'x-pairing-secret': secretRef.current } });
+                    if (code !== deviceCode.current) return;
+                    if (res.status === 404) return;
+                    if ([400, 403, 410].includes(res.status)) {
+                        clearPolling();
+                        setError(res.status === 410 ? 'Login session expired. Please try again.' : 'Pairing could not be verified. Please try again.');
+                        setExpired(true);
+                        setWaiting(false);
+                        return;
+                    }
+                    if (!res.ok) return;
+                    data = (await res.json()) as DesktopSessionPayload;
+                    if (typeof data.token !== 'string' || !data.token || typeof data.id !== 'string') throw new Error('Invalid session response');
+                    // Consume delivery only after the OS credential store confirms it.
+                    const stored = await window.electronAPI?.secureStoreToken(data.token);
+                    if (code !== deviceCode.current) return;
+                    if (!stored?.ok || !stored.encrypted) throw new Error('Secure token storage is unavailable');
+                    pendingAcknowledgementRef.current = { code, data };
                 }
-                if (!res.ok) return;
-                const data = (await res.json()) as DesktopSessionPayload;
-                if (typeof data.token !== 'string' || !data.token || typeof data.id !== 'string') throw new Error('Invalid session response');
-                // Consume delivery only after the OS credential store confirms it.
-                const stored = await window.electronAPI?.secureStoreToken(data.token);
-                if (!stored?.ok || !stored.encrypted) throw new Error('Secure token storage is unavailable');
+                // A lost response may follow a successful server-side consumption.
+                // Retry the idempotent acknowledgement rather than polling again.
                 const acknowledgement = await apiRequest(`/auth/desktop-session/${code}/ack`, {
                     method: 'POST', headers: { 'x-pairing-secret': secretRef.current },
                 });
                 if (!acknowledgement.ok) throw new Error('Pairing delivery was not acknowledged');
-                if (code === deviceCode.current) completeLogin(data);
+                if (code === deviceCode.current) {
+                    pendingAcknowledgementRef.current = null;
+                    completeLogin(data);
+                }
             } catch {
                 // Retry within the fixed pairing deadline.
             } finally { pollInFlightRef.current = false; }
@@ -146,6 +158,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         setError('');
         // Each attempt gets a fresh challenge, including retries after a network error.
         deviceCode.current = crypto.randomUUID();
+        pendingAcknowledgementRef.current = null;
         const code = deviceCode.current;
         try {
             const deviceId = await window.electronAPI?.getDeviceId?.();
@@ -183,6 +196,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
     const handleRetry = () => {
         clearPolling();
         deviceCode.current = crypto.randomUUID(); secretRef.current = ''; expiresAtRef.current = 0;
+        pendingAcknowledgementRef.current = null;
         sessionConsumedRef.current = false;
         setExpired(false);
         setWaiting(false);

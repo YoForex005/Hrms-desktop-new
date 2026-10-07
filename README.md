@@ -1,5 +1,32 @@
 # EmpTrakr Desktop
 
+## Desktop login compatibility
+
+The current backend requires EmpTrakr Desktop 1.2.30 or later. Earlier published
+installers open a browser code without creating the required device-bound pairing
+session and cannot complete this login protocol.
+
+After a compatible release is published, update the installed desktop app, start
+sign-in from that app, and complete it in the newly opened browser tab within five
+minutes. Use an Employee account. An old browser tab cannot restart a pairing
+session. The desktop must securely store the issued token and acknowledge it
+before entering the dashboard; interrupted acknowledgement delivery is retried.
+
+Before publishing, run the existing test, lint, build, release-version, and backend
+compatibility checks. The existing tag-triggered release workflow signs Windows
+and macOS installers and notarizes macOS builds. It requires these repository
+Actions secrets in addition to `GH_TOKEN`:
+
+- `WIN_CSC_LINK` and `WIN_CSC_KEY_PASSWORD`
+- `MAC_CSC_LINK` and `MAC_CSC_KEY_PASSWORD`
+- `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`
+
+Configure credentials through GitHub's secret settings, never in source or logs.
+Keep CI/CD and release scripts unchanged. Publish a matching version tag only
+after validation and credential setup. Verify the public installer assets, updater
+metadata, and website download destinations after publication, then verify login,
+clock-in, heartbeat, and screenshot delivery on the affected installed app.
+
 Electron + React + Vite desktop time tracker.
 
 ## Prerequisites
