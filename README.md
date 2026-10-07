@@ -1,5 +1,29 @@
 # EmpTrakr Desktop
 
+## Dashboard destination
+
+"View Dashboard" opens `/user/dashboard` on the configured website origin.
+The Electron main process chooses this address from its validated configuration;
+a stale renderer URL cannot redirect it to localhost or add credentials to it.
+The browser uses its own Employee session and may request sign-in.
+
+Installed apps reject HTTP and local/private service addresses at startup. Build
+and install with the existing production packaging process; do not copy a
+development runtime-config.json into an installer.
+
+To run the development widget against production, put matching service settings
+in the ignored `.env.local` file before starting the app:
+
+```dotenv
+API_BASE=https://api.emptrakr.com/api
+VITE_API_BASE=https://api.emptrakr.com/api
+WEB_BASE=https://emptrakr.com
+VITE_WEB_BASE=https://emptrakr.com
+```
+
+Restart the desktop and its development server after changing these settings.
+For isolated local development, use matching local service addresses instead.
+
 ## Desktop login compatibility
 
 The current backend requires EmpTrakr Desktop 1.2.30 or later. Earlier published

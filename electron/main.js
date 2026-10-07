@@ -874,10 +874,9 @@ app.whenReady().then(() => {
         }
     });
 
-    onTrusted('open-dashboard', (_event, payload) => {
-        const dashboardUrl = (typeof payload === 'string' && /^https?:\/\//i.test(payload))
-            ? payload
-            : new URL('/dashboard', WEB_BASE).toString();
+    onTrusted('open-dashboard', () => {
+        // Use the validated main-process origin, even if a renderer has stale settings.
+        const dashboardUrl = new URL('/user/dashboard', WEB_BASE).toString();
 
         if (isAllowedExternalUrl(dashboardUrl)) {
             shell.openExternal(dashboardUrl);

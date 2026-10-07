@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useTimer, formatDuration } from '../hooks/useTimer';
 import { useAppTracker } from '../hooks/useAppTracker';
-import { WEB_BASE } from '../config';
+import { DASHBOARD_URL } from '../config';
 import type { User } from '../types';
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -504,12 +504,11 @@ export default function Dashboard({ view, user, onLogout }: DashboardProps) {
                         <button
                             className="btn"
                             onClick={() => {
-                                const url = `${WEB_BASE.replace(/\/+$/, '')}/dashboard`;
                                 const electronAPI = window.electronAPI;
                                 if (electronAPI?.openDashboard) {
-                                    electronAPI.openDashboard(url);
+                                    electronAPI.openDashboard(DASHBOARD_URL);
                                 } else {
-                                    window.open(url, '_blank');
+                                    window.open(DASHBOARD_URL, '_blank');
                                 }
                             }}
                             style={{ flex: 1, padding: '10px', fontSize: 13, background: 'transparent', border: '1px solid #e2e8f0', color: '#64748b', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}
