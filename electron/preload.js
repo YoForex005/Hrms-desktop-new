@@ -174,7 +174,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
      * Opens the website dashboard in the system browser.
      * @param url - optional full dashboard URL (defaults to main-process WEB_BASE)
      */
-    openDashboard: (url) => ipcRenderer.send('open-dashboard', url),
+    openDashboard: () => ipcRenderer.invoke('open-dashboard'),
 
     // ── Safe Encrypted Token Storage ──────────────────────────────────────────
     secureStoreToken: (token) => ipcRenderer.invoke('secure-store-token', token),

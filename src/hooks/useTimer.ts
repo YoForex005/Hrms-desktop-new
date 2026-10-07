@@ -55,7 +55,7 @@ declare global {
             onOtaStatus?: (callback: (status: string) => void) => void;
             onUpdateReady?: (callback: (version: string) => void) => void;
             restartApp?: () => void;
-            openDashboard?: (url: string) => void;
+            openDashboard?: () => Promise<{ ok: boolean; error?: string }>;
             getAppUsage: () => Promise<{ active: unknown; usage: import('../api/usage').AppUsageData[] }>;
             onAppTrackerUpdate: (callback: (data: { active: unknown; usage: import('../api/usage').AppUsageData[] }) => void) => void;
             removeAppTrackerListeners: () => void;

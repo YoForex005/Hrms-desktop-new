@@ -874,17 +874,12 @@ app.whenReady().then(() => {
         }
     });
 
-    onTrusted('open-dashboard', () => {
-        // Use the validated main-process origin, even if a renderer has stale settings.
-        const dashboardUrl = new URL('/user/dashboard', WEB_BASE).toString();
-
-        if (isAllowedExternalUrl(dashboardUrl)) {
-            shell.openExternal(dashboardUrl);
-            console.log('[Auth] Opened browser dashboard:', dashboardUrl);
-        } else {
-            console.warn('[Security] Blocked open-dashboard URL outside allowlist:', dashboardUrl);
-        }
-    });
+    handleTrusted('open-dashboard', () => require('./dashboardHandoff.cjs').openEmployeeDashboard({
+        getToken: () => sessionAuthToken,
+        requestApi: (token, request) => require('./apiBridge.cjs').requestApi(API_BASE, token, request),
+        webBase: WEB_BASE, allowed: isAllowedExternalUrl,
+        openExternal: url => shell.openExternal(url),
+    }));
 
     onTrusted('restart-app', () => {
         if (currentShiftStatus !== 'stopped') {

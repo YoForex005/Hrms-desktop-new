@@ -2,10 +2,18 @@
 
 ## Dashboard destination
 
-"View Dashboard" opens `/user/dashboard` on the configured website origin.
-The Electron main process chooses this address from its validated configuration;
-a stale renderer URL cannot redirect it to localhost or add credentials to it.
-The browser uses its own Employee session and may request sign-in.
+"View Dashboard" opens a verified handoff page on the configured website origin.
+The trusted main process requests a two-minute, single-use code using the paired
+Employee desktop session. The browser removes the code from its address bar,
+verifies the intended Employee and company, and asks for confirmation when its
+Employee account differs or is absent. It then creates a separate HttpOnly browser
+session and opens `/user/dashboard`. Existing Admin sessions and desktop tracking
+are preserved. Cancel leaves the browser account unchanged. Lost confirmation
+responses can retry the same handoff without creating another session.
+
+This requires the compatible website/backend and an updated installed Desktop.
+An older backend or failed request displays an error without opening a different
+account's dashboard. Tokens, passwords and employee identity never enter the URL.
 
 Installed apps reject HTTP and local/private service addresses at startup. Build
 and install with the existing production packaging process; do not copy a
