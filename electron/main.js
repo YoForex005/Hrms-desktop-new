@@ -304,56 +304,59 @@ function startBackend() {
 // ── Idle Detection ────────────────────────────────────────────────────────────
 
 /**
- * Starts polling the system idle time every IDLE_POLL_INTERVAL_MS milliseconds.
+ * Re-evaluates idle using the current work location and system inactivity.
  * Emits 'idle-start' / 'idle-end' IPC events to the renderer on state changes.
+ * Used by both periodic polling and work-location transitions.
  *
  * Why not use powerMonitor events directly?
  *   powerMonitor.on('user-did-become-idle') requires a threshold set globally.
  *   Polling gives us full control and is reliable across all platforms.
  */
+function refreshIdleState() {
+    // Only run if the window exists and is ready
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+
+    // Suppress idle tracking while the screen is locked.
+    // The break (started by screen-lock) already accounts for this time.
+    // Counting idle on top of a lock-break would double-count inactivity.
+    if (isScreenLocked || attendance.sensors.sleeping) return;
+
+    const idleSecs = powerMonitor.getSystemIdleTime();
+    const inputIdle = idleSecs >= IDLE_THRESHOLD_SECS;
+    const screenIdle = isWfhMode && wfhScreenMonitor.isScreenIdle();
+    // WFH OR-mode: either input idle OR screen idle triggers.
+    // Office (default): input idle alone — existing behaviour.
+    const nowIdle = isWfhMode ? (inputIdle || screenIdle) : inputIdle;
+    tracker.setPaused(nowIdle || isScreenLocked); screenshotScheduler.setPaused(nowIdle || isScreenLocked);
+
+    // ── Transition: Active → Idle ──────────────────────────────────────
+    if (nowIdle && !isUserIdle) {
+        isUserIdle = true;
+
+        // Pick the earliest known idle start:
+        //   - Input trigger: now - idleSecs (standard path)
+        //   - Screen trigger: when the screen actually went static
+        // Whichever happened first is the true idle start.
+        const inputIdleStart = new Date(Date.now() - idleSecs * 1000);
+        const screenIdleAt = isWfhMode ? (wfhScreenMonitor.getScreenIdleAt() ?? inputIdleStart) : inputIdleStart;
+        const idleStartTime = (screenIdleAt < inputIdleStart ? screenIdleAt : inputIdleStart).toISOString();
+
+        console.log(`[Idle] User went idle. Input idle: ${idleSecs}s, screen idle: ${screenIdle} (Threshold: ${IDLE_THRESHOLD_SECS}s) started at: ${idleStartTime}`);
+        attendance.setSensors({ idle: true, idleStart: idleStartTime });
+        mainWindow.webContents.send('idle-start', idleStartTime);
+    }
+
+    // ── Transition: Idle → Active ──────────────────────────────────────
+    if (!nowIdle && isUserIdle) {
+        isUserIdle = false;
+        attendance.setSensors({ idle: false, idleStart: null });
+        console.log('[Idle] User became active again');
+        mainWindow.webContents.send('idle-end');
+    }
+}
+
 function startIdlePolling() {
-    setInterval(() => {
-        // Only run if the window exists and is ready
-        if (!mainWindow || mainWindow.isDestroyed()) return;
-
-        // Suppress idle tracking while the screen is locked.
-        // The break (started by screen-lock) already accounts for this time.
-        // Counting idle on top of a lock-break would double-count inactivity.
-        if (isScreenLocked || attendance.sensors.sleeping) return;
-
-        const idleSecs = powerMonitor.getSystemIdleTime();
-        const inputIdle = idleSecs >= IDLE_THRESHOLD_SECS;
-        const screenIdle = isWfhMode && wfhScreenMonitor.isScreenIdle();
-        // WFH OR-mode: either input idle OR screen idle triggers.
-        // Office (default): input idle alone — existing behaviour.
-        const nowIdle = isWfhMode ? (inputIdle || screenIdle) : inputIdle;
-        tracker.setPaused(nowIdle || isScreenLocked); screenshotScheduler.setPaused(nowIdle || isScreenLocked);
-
-        // ── Transition: Active → Idle ──────────────────────────────────────
-        if (nowIdle && !isUserIdle) {
-            isUserIdle = true;
-
-            // Pick the earliest known idle start:
-            //   - Input trigger: now - idleSecs (standard path)
-            //   - Screen trigger: when the screen actually went static
-            // Whichever happened first is the true idle start.
-            const inputIdleStart = new Date(Date.now() - idleSecs * 1000);
-            const screenIdleAt = isWfhMode ? (wfhScreenMonitor.getScreenIdleAt() ?? inputIdleStart) : inputIdleStart;
-            const idleStartTime = (screenIdleAt < inputIdleStart ? screenIdleAt : inputIdleStart).toISOString();
-
-            console.log(`[Idle] User went idle. Input idle: ${idleSecs}s, screen idle: ${screenIdle} (Threshold: ${IDLE_THRESHOLD_SECS}s) started at: ${idleStartTime}`);
-            attendance.setSensors({ idle: true, idleStart: idleStartTime });
-            mainWindow.webContents.send('idle-start', idleStartTime);
-        }
-
-        // ── Transition: Idle → Active ──────────────────────────────────────
-        if (!nowIdle && isUserIdle) {
-            isUserIdle = false;
-            attendance.setSensors({ idle: false, idleStart: null });
-            console.log('[Idle] User became active again');
-            mainWindow.webContents.send('idle-end');
-        }
-    }, IDLE_POLL_INTERVAL_MS);
+    setInterval(refreshIdleState, IDLE_POLL_INTERVAL_MS);
 }
 
 // ── Screen Lock Detection ─────────────────────────────────────────────────────
@@ -794,13 +797,12 @@ app.whenReady().then(() => {
             );
         } else {
             wfhScreenMonitor.stop();
-            // If we were in a WFH-combined idle and switch back to office mode,
-            // reset idle state cleanly so the poller re-evaluates from scratch.
-            if (isUserIdle && mainWindow && !mainWindow.isDestroyed()) {
-                isUserIdle = false;
-                mainWindow.webContents.send('idle-end');
-            }
         }
+
+        // Apply the new mode's idle rules before reconciling attendance. The
+        // renderer, coordinator and capture pause state must change together.
+        refreshIdleState();
+        void attendance.reconcile().catch(() => {});
     });
 
     // ── Helper: External URL Security Allowlist ─────────────────────────────

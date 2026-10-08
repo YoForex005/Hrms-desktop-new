@@ -202,6 +202,7 @@ export function useTimer() {
     const [timezone, setTimezone] = useState('UTC');
     const timezoneRef = useRef('UTC');
     const statusSequence = useRef(0);
+    const [autoCheckout, setAutoCheckout] = useState<{ endedAt: string; reason: string | null } | null>(null);
 
     // ── Data Fetching ─────────────────────────────────────────────────────────
 
@@ -212,6 +213,7 @@ export function useTimer() {
             if (sequence !== statusSequence.current) return;
             setTimezone(data.timezone || 'UTC'); timezoneRef.current = data.timezone || 'UTC';
             setStatus(data.status);
+            setAutoCheckout(data.status === 'stopped' ? data.autoCheckout ?? null : null);
             if (data.shift && typeof data.shift === 'object') {
                 setCurrentShift(data.shift as HistoryShift);
                 if (data.timer) {
@@ -410,7 +412,7 @@ export function useTimer() {
         return () => clearInterval(interval);
     }, [fetchStatus]);
 
-    // Keep the active shift alive. If the app reconnects within 5 minutes,
+    // Keep the active shift alive. If the app reconnects within 10 minutes,
     // backend clears pending disconnect and keeps the same shift running.
     useEffect(() => {
         if (status !== 'working' && status !== 'on_break') return;
@@ -419,8 +421,10 @@ export function useTimer() {
             try {
                 await sendHeartbeat();
                 await fetchStatus();
-            } catch (err) {
-                console.warn('[Heartbeat] Failed to ping backend:', err);
+            } catch {
+                // A late heartbeat may have closed the shift. Read status even
+                // after rejection so the UI requires a new explicit clock-in.
+                await fetchStatus();
             }
         };
 
@@ -801,6 +805,7 @@ export function useTimer() {
     return {
         status,
         connection,
+        autoCheckout,
         elapsedSecs,
         history,
         loading,

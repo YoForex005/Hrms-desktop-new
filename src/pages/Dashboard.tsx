@@ -291,7 +291,7 @@ interface DashboardProps {
 
 export default function Dashboard({ view, user, onLogout }: DashboardProps) {
     const {
-        status, loading, actionLoading, error, connection,
+        status, loading, actionLoading, error, connection, autoCheckout,
         handleStart, handleBreak, handleStop,
         todayWorked, todayBreaksCount, todayIdleSecs,
         expectedWorkSecs, expectedActiveSecs, maxBreaks,
@@ -470,6 +470,11 @@ export default function Dashboard({ view, user, onLogout }: DashboardProps) {
                         )}
 
                         {error && <div className="form-error" style={{ width: '100%', textAlign: 'center' }}>{error}</div>}
+                        {status === 'stopped' && autoCheckout && (
+                            <div role="status" style={{ width: '100%', textAlign: 'center', fontSize: 12, color: '#92400e', marginTop: 8 }}>
+                                Automatically clocked out at {new Date(autoCheckout.endedAt).toLocaleTimeString()} after losing the connection. Clock in again to resume.
+                            </div>
+                        )}
 
                         <div className="timer-actions">
                             <button

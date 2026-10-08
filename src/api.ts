@@ -149,6 +149,7 @@ export async function getStatus() {
         timezone?: string;
         status: 'stopped' | 'working' | 'on_break';
         shift: unknown;
+        autoCheckout?: { shiftId: string; endedAt: string; reason: string | null } | null;
         serverNow?: string;
         trackingLease?: { supported: boolean; serverNow: string; onlineUntil: string | null };
         timer?: {
