@@ -45,6 +45,7 @@ export interface HistoryShift {
 declare global {
     interface Window {
         electronAPI?: {
+            onSessionEnded?: (callback: (detail: { code: string; error: string }) => void) => () => void;
             config?: { API_BASE: string; WEB_BASE: string };
             requestApi?: (input: { path: string; method: string; body?: BodyInit | null; headers: Record<string, string> }) => Promise<{ body: string; status: number; headers: Record<string, string> }>;
             secureStoreToken: (token: string) => Promise<{ ok: boolean; encrypted?: boolean; memoryOnly?: boolean; error?: string }>;

@@ -14,6 +14,11 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
+    onSessionEnded: callback => {
+        const listener = (_event, detail) => callback(detail);
+        ipcRenderer.on('session-ended', listener);
+        return () => ipcRenderer.removeListener('session-ended', listener);
+    },
     config: ipcRenderer.sendSync('get-config'),
     requestApi: request => ipcRenderer.invoke('api-request', request),
     getDeviceId: () => ipcRenderer.invoke('get-device-id'),
