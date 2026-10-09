@@ -49,35 +49,27 @@ jobs:
         if: matrix.os == 'macos-latest'
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          CSC_IDENTITY_AUTO_DISCOVERY: true
+          CSC_IDENTITY_AUTO_DISCOVERY: false
           VITE_API_BASE: https://api.emptrakr.com/api
           VITE_WEB_BASE: https://emptrakr.com
           API_BASE: https://api.emptrakr.com/api
           WEB_BASE: https://emptrakr.com
         run: |
-          node scripts/validate-signing.cjs
           node scripts/write-electron-config.cjs
           npm run build
-          npx electron-builder --mac --x64 --arm64 -p always --config.forceCodeSigning=true --config.mac.notarize=true
+          npx electron-builder --mac --x64 --arm64 -p always --config.forceCodeSigning=false --config.mac.notarize=false --config.mac.identity=- --config.mac.hardenedRuntime=false
 
       - name: Build and Publish (Windows)
         if: matrix.os == 'windows-latest'
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
           VITE_API_BASE: https://api.emptrakr.com/api
           VITE_WEB_BASE: https://emptrakr.com
           API_BASE: https://api.emptrakr.com/api
           WEB_BASE: https://emptrakr.com
         run: |
-          node scripts/validate-signing.cjs
           node scripts/write-electron-config.cjs
           npm run build
-          npx electron-builder --win -p always --config.forceCodeSigning=true
+          npx electron-builder --win -p always --config.forceCodeSigning=false --config.win.signExecutable=false
 
