@@ -28,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [windows-latest]
 
     steps:
       - name: Check out Git repository
@@ -44,20 +44,6 @@ jobs:
 
       - name: Integration regression tests
         run: npm test
-
-      - name: Build and Publish (macOS)
-        if: matrix.os == 'macos-latest'
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          CSC_IDENTITY_AUTO_DISCOVERY: false
-          VITE_API_BASE: https://api.emptrakr.com/api
-          VITE_WEB_BASE: https://emptrakr.com
-          API_BASE: https://api.emptrakr.com/api
-          WEB_BASE: https://emptrakr.com
-        run: |
-          node scripts/write-electron-config.cjs
-          npm run build
-          npx electron-builder --mac --x64 --arm64 -p always --config.forceCodeSigning=false --config.mac.notarize=false --config.mac.identity=- --config.mac.hardenedRuntime=false
 
       - name: Build and Publish (Windows)
         if: matrix.os == 'windows-latest'
