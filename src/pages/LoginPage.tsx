@@ -91,9 +91,10 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                     const res = await apiRequest(`/auth/desktop-session/${code}`, { headers: { 'x-pairing-secret': secretRef.current } });
                     if (code !== deviceCode.current) return;
                     if (res.status === 404) return;
-                    if ([400, 403, 410].includes(res.status)) {
+                    if ([400, 401, 403, 410].includes(res.status)) {
+                        const denial = await res.json().catch(() => ({}));
                         clearPolling();
-                        setError(res.status === 410 ? 'Login session expired. Please try again.' : 'Pairing could not be verified. Please try again.');
+                        setError(denial.code === 'EMPLOYMENT_ENDED' ? 'Your employment has ended. Contact your administrator.' : res.status === 410 ? 'Login session expired. Please try again.' : 'Pairing could not be verified. Please try again.');
                         setExpired(true);
                         setWaiting(false);
                         return;

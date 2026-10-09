@@ -121,15 +121,30 @@ function trustedSender(event) {
 }
 function onTrusted(channel, listener) { ipcMain.on(channel, (event, ...args) => { if (trustedSender(event)) return listener(event, ...args); }); }
 function handleTrusted(channel, listener) { ipcMain.handle(channel, (event, ...args) => { if (!trustedSender(event)) throw new Error('Untrusted IPC sender'); return listener(event, ...args); }); }
-function setSessionToken(token) { const next = normalizeAuthToken(token); if (next !== sessionAuthToken) { online.disconnect('Session changed'); clearQueues(); } sessionAuthToken = next; tracker.setAuthToken(sessionAuthToken); screenshotScheduler.setAuthToken(sessionAuthToken); disconnectIntentSent = false; }
+function setSessionToken(token) { const next = normalizeAuthToken(token); if (next !== sessionAuthToken) { online.disconnect('Session changed'); clearQueues(); } sessionAuthToken = next; employmentSession.setToken(next); tracker.setAuthToken(sessionAuthToken); screenshotScheduler.setAuthToken(sessionAuthToken); disconnectIntentSent = false; }
 
 let backendProcess = null;
 let pendingAuthCallbackUrl = null;
 let sessionAuthToken = null;
+let inMemoryTokenFallback = null;
+const employmentSession = new (require('./employmentSession.cjs').EmploymentSession)({ onEnd: detail => {
+    setSessionToken(null); tracker.clearTrackingData(); currentShiftStatus = 'stopped';
+    inMemoryTokenFallback = null;
+    for (const name of ['auth.enc', 'attendance-intent.enc']) {
+        const file = path.join(app.getPath('userData'), name);
+        try { if (fs.existsSync(file)) fs.unlinkSync(file); } catch { /* The server has revoked access; retry cleanup at sign-out. */ }
+    }
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('session-ended', detail);
+} });
+async function sessionTransport(request, token) {
+    const response = await require('./apiBridge.cjs').requestApi(API_BASE, token, request);
+    employmentSession.observe(token, response);
+    return response;
+}
 let attendanceRevision = 0;
 const attendance = new (require('./attendanceCoordinator.cjs').AttendanceCoordinator)({
     token: () => sessionAuthToken,
-    transport: (request, token) => require('./apiBridge.cjs').requestApi(API_BASE, token, request),
+    transport: sessionTransport,
     disconnectedAt: () => online.getDisconnectedAt(),
     load: () => {
         const file = path.join(app.getPath('userData'), 'attendance-intent.enc');
@@ -581,17 +596,14 @@ app.whenReady().then(() => {
 
     onTrusted('set-tracker-auth-token', (_event, token) => {
         if (typeof token !== 'string') return;
-        tracker.setAuthToken(token);
-        screenshotScheduler.setAuthToken(token);
-        sessionAuthToken = normalizeAuthToken(token);
-        disconnectIntentSent = false;
+        setSessionToken(token);
     });
 
     onTrusted('clear-tracker-auth-token', () => {
         online.disconnect('Session cleared'); clearQueues();
         tracker.clearAuthToken();
         screenshotScheduler.clearAuthToken();
-        sessionAuthToken = null;
+        setSessionToken(null);
         disconnectIntentSent = false;
     });
 
@@ -624,7 +636,7 @@ app.whenReady().then(() => {
             }
             if (request.method === 'POST' && request.path.startsWith('/time/') && request.path !== '/time/disconnect-intent' && revision === attendanceRevision) {
                 try {
-                    const statusResponse = await require('./apiBridge.cjs').requestApi(API_BASE, token, { method: 'GET', path: '/time/status' });
+                    const statusResponse = await sessionTransport({ method: 'GET', path: '/time/status' }, token);
                     if (token === sessionAuthToken && revision === attendanceRevision) {
                         if (statusResponse.status !== 200) online.disconnect('Unable to confirm shift status');
                         else {
@@ -642,12 +654,12 @@ app.whenReady().then(() => {
         }
         return response;
     });
-    let inMemoryTokenFallback = null;
 
     // ── IPC: Secure Token Storage (safeStorage / DPAPI) ──────────────────────
     handleTrusted('secure-store-token', async (_event, token) => {
         try {
             setSessionToken(token);
+            if (token && sessionAuthToken !== normalizeAuthToken(token)) return { ok: false, error: 'Session expired. Please sign in again.' };
             const tokenPath = path.join(app.getPath('userData'), 'auth.enc');
             if (!token || typeof token !== 'string') {
                 inMemoryTokenFallback = null;
@@ -682,7 +694,7 @@ app.whenReady().then(() => {
             if (safeStorage && safeStorage.isEncryptionAvailable()) {
                 if (!fs.existsSync(tokenPath)) return null;
                 const data = fs.readFileSync(tokenPath);
-                const token = safeStorage.decryptString(data); setSessionToken(token); return token;
+                const token = safeStorage.decryptString(data); setSessionToken(token); return sessionAuthToken;
             }
             return inMemoryTokenFallback;
         } catch (err) {

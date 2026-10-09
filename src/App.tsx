@@ -15,6 +15,7 @@ function App() {
     const [user, setUser] = useState<User | null>(null);
     const [token, setToken] = useState<string | null>(() => getToken());
     const [logoutError, setLogoutError] = useState('');
+    const [sessionMessage, setSessionMessage] = useState('');
 
     useEffect(() => {
         syncSecureToken().then((t) => {
@@ -153,15 +154,20 @@ function App() {
 
     // Auto-logout on token expiry. api.ts fires 'wf:session-expired' on 401.
     useEffect(() => {
-        const onExpired = () => {
+        const end = (code?: string) => {
+            setAuthToken(null);
+            setSessionMessage(code === 'EMPLOYMENT_ENDED' ? 'Your employment has ended. Contact your administrator.' : 'Session expired. Please sign in again.');
             setUser(null);
             setToken(null);
         };
+        const onExpired = (event: Event) => end((event as CustomEvent<{ code?: string }>).detail?.code);
         window.addEventListener('wf:session-expired', onExpired);
-        return () => window.removeEventListener('wf:session-expired', onExpired);
+        const unsubscribe = window.electronAPI?.onSessionEnded?.(detail => end(detail.code));
+        return () => { window.removeEventListener('wf:session-expired', onExpired); unsubscribe?.(); };
     }, []);
 
     const handleLogin = (u: User, t: string) => {
+        setSessionMessage('');
         setUser(u);
         setToken(t);
     };
@@ -182,6 +188,7 @@ function App() {
         return (
             <>
                 <Titlebar userName="Guest" />
+                {sessionMessage && <p role="alert" style={{ color: 'var(--danger)', margin: '8px 16px' }}>{sessionMessage}</p>}
                 <LoginPage onLogin={handleLogin} />
                 {version && (
                     <div className="version-tag">v {version}</div>

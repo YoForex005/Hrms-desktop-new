@@ -25,8 +25,8 @@ export type CompanyBrandChangedDetail = {
  * clear state and redirect to the login screen automatically.
  */
 export class SessionExpiredError extends Error {
-    constructor() {
-        super('Session expired — please log in again.');
+    constructor(message = 'Session expired — please log in again.') {
+        super(message);
         this.name = 'SessionExpiredError';
     }
 }
@@ -45,12 +45,13 @@ async function parseJson(res: Response) {
 }
 
 async function handleResponse(res: Response) {
-    if (res.status === 401) {
+    const denial = [401, 403].includes(res.status) ? await res.clone().json().catch(() => ({})) : null;
+    if (res.status === 401 || denial?.code === 'EMPLOYMENT_ENDED') {
         setAuthToken(null);
         localStorage.removeItem('wf_user');
         localStorage.removeItem('wf_idle_threshold');
-        window.dispatchEvent(new Event('wf:session-expired'));
-        throw new SessionExpiredError();
+        window.dispatchEvent(new CustomEvent('wf:session-expired', { detail: { code: denial?.code } }));
+        throw new SessionExpiredError(denial?.code === 'EMPLOYMENT_ENDED' ? 'Your employment has ended. Contact your administrator.' : undefined);
     }
     const data = await parseJson(res);
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
