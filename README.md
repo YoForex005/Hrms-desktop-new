@@ -45,19 +45,18 @@ session. The desktop must securely store the issued token and acknowledge it
 before entering the dashboard; interrupted acknowledgement delivery is retried.
 
 Before publishing, run the existing test, lint, build, release-version, and backend
-compatibility checks. The existing tag-triggered release workflow signs Windows
-and macOS installers and notarizes macOS builds. It requires these repository
-Actions secrets in addition to `GH_TOKEN`:
+compatibility checks. The tag-triggered release workflow requires signing credentials,
+builds signed Windows and Intel/Apple Silicon Mac installers, and notarizes Mac apps
+and DMGs. Native verification checks the final archives before publication. A single
+publisher stages all assets in a draft, checks their downloaded checksums, then makes
+the complete release public. Missing signing credentials prevent publication.
 
-- `WIN_CSC_LINK` and `WIN_CSC_KEY_PASSWORD`
-- `MAC_CSC_LINK` and `MAC_CSC_KEY_PASSWORD`
-- `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`
-
-Configure credentials through GitHub's secret settings, never in source or logs.
-Keep CI/CD and release scripts unchanged. Publish a matching version tag only
-after validation and credential setup. Verify the public installer assets, updater
-metadata, and website download destinations after publication, then verify login,
-clock-in, heartbeat, and screenshot delivery on the affected installed app.
+Configure the secrets and expected Windows publisher described in
+[the desktop release runbook](docs/desktop-releases.md) before pushing a version tag.
+It also documents local signing, notarization, and complete manual publication.
+Never commit certificates, passwords, or access tokens. Verify public installer
+assets, updater metadata, and website download destinations after publication,
+then verify pairing and tracking on the affected installed apps.
 
 Electron + React + Vite desktop time tracker.
 
