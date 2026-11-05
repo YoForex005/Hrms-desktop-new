@@ -1333,7 +1333,7 @@ body {
 .timer-sub { margin: 0 0 12px; color: #52627d; font-size: 10px; font-weight: 600; }
 .timer-actions { gap: 10px; }
 
-.action-card { min-height: 98px; gap: 4px; border-radius: 16px; }
+.action-card { min-height: 126px; gap: 4px; border-radius: 16px; }
 .action-card__icon { width: 28px; height: 28px; border-radius: 8px; }
 .action-card__icon svg { width: 16px; height: 16px; }
 .action-card__title { font-size: 14px; letter-spacing: -0.15px; }
