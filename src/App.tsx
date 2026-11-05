@@ -201,21 +201,16 @@ function App() {
         <>
             <Titlebar />
             {logoutError && <p role="alert" style={{ color: 'var(--danger)', margin: '8px 16px', fontSize: 12 }}>{logoutError}</p>}
-            <Dashboard view="tracker" user={user} onLogout={handleLogout} />
-
-            {version && (
-                <div className="version-tag">
-                    {updatePhase !== 'idle' && updatePhase !== 'ready' && (
-                        <span style={{ marginRight: '8px', opacity: 0.8 }}>
-                            {updatePhase === 'downloading' ? `downloading: ${otaProgress}%` : `installing: ${otaProgress}%`} |
-                        </span>
-                    )}
-                    {otaStatus && updatePhase === 'idle' && !readyVersion && (
-                        <span style={{ marginRight: '8px', opacity: 0.8 }}>{otaStatus.toLowerCase()} |</span>
-                    )}
-                    v {version}
-                </div>
-            )}
+            <Dashboard
+                view="tracker"
+                user={user}
+                onLogout={handleLogout}
+                version={version}
+                otaStatus={otaStatus}
+                updatePhase={updatePhase}
+                otaProgress={otaProgress}
+                readyVersion={readyVersion}
+            />
 
             {updatePhase === 'ready' && readyVersion && (
                 <div className="update-banner">

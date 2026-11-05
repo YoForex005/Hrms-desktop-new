@@ -227,9 +227,14 @@ interface DashboardProps {
     view: string;
     user: User;
     onLogout: () => void;
+    version: string;
+    otaStatus: string;
+    updatePhase: 'idle' | 'downloading' | 'installing' | 'ready';
+    otaProgress: number;
+    readyVersion: string;
 }
 
-export default function Dashboard({ view, user, onLogout }: DashboardProps) {
+export default function Dashboard({ view, user, onLogout, version, otaStatus, updatePhase, otaProgress, readyVersion }: DashboardProps) {
     const {
         status, loading, actionLoading, error, connection, autoCheckout,
         handleStart, handleBreak, handleStop,
@@ -476,6 +481,19 @@ export default function Dashboard({ view, user, onLogout }: DashboardProps) {
                             <span className="secondary-action__copy"><strong>Logout</strong><small>{status === 'stopped' ? 'End this session' : 'Clock out first'}</small></span>
                         </button>
                     </div>
+                    {version && (
+                        <div className="version-tag">
+                            {updatePhase !== 'idle' && updatePhase !== 'ready' && (
+                                <span style={{ marginRight: '8px', opacity: 0.8 }}>
+                                    {updatePhase === 'downloading' ? `downloading: ${otaProgress}%` : `installing: ${otaProgress}%`} |
+                                </span>
+                            )}
+                            {otaStatus && updatePhase === 'idle' && !readyVersion && (
+                                <span style={{ marginRight: '8px', opacity: 0.8 }}>{otaStatus.toLowerCase()} |</span>
+                            )}
+                            v {version}
+                        </div>
+                    )}
                     {dashboardError && <p role="alert" style={{ color: '#b42318', textAlign: 'center', fontSize: 13 }}>{dashboardError}</p>}
                 </>
             )}
