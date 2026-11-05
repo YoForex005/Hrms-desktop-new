@@ -424,10 +424,10 @@ function startScreenLockDetection() {
 
 function createWindow() {
     mainWindow = new BrowserWindow({
-        width: 480,
-        height: 700,
-        minWidth: 480,
-        minHeight: 700,
+        width: 400,
+        height: 527,
+        minWidth: 400,
+        minHeight: 527,
         resizable: false,
         frame: false,
         titleBarStyle: 'hidden',

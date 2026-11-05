@@ -1316,9 +1316,9 @@ body {
 .titlebar__right, .titlebar__controls { gap: 4px !important; }
 .titlebar__icon-btn { width: 20px; height: 20px; }
 .layout { height: calc(100vh - 34px); }
-.main { padding: 12px 18px 16px; }
+.main { padding: 10px 14px; }
 
-.tracker-greeting { margin: 0 3px 14px; }
+.tracker-greeting { margin: 0 2px 12px; }
 .tracker-greeting h1 { color: #102a4c; font-size: 17px; letter-spacing: -0.45px; line-height: 1.1; }
 .tracker-greeting p { margin-top: 3px; color: #8ba0bf; font-size: 11px; font-weight: 700; }
 .tracker-avatar { width: 36px; height: 36px; border-width: 2px; font-size: 17px; box-shadow: 0 8px 18px rgba(16, 185, 129, 0.22); }
@@ -1339,7 +1339,7 @@ body {
 .action-card__title { font-size: 14px; letter-spacing: -0.15px; }
 .action-card__subtitle { font-size: 9px; }
 
-.tracker-secondary-actions { gap: 14px; margin-top: 18px; }
+.tracker-secondary-actions { gap: 8px; margin-top: 10px; }
 .secondary-action { min-height: 62px; gap: 8px; padding: 8px 10px; border-radius: 20px; }
 .secondary-action__icon { width: 36px; height: 36px; border-radius: 12px; }
 .secondary-action__icon svg { width: 17px; height: 17px; }
@@ -1364,5 +1364,5 @@ body {
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0;
-  margin-top: 10px;
+  margin-top: 2px;
 }
