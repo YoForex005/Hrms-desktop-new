@@ -1339,7 +1339,7 @@ body {
 .action-card__title { font-size: 14px; letter-spacing: -0.15px; }
 .action-card__subtitle { font-size: 9px; }
 
-.tracker-secondary-actions { gap: 10px; margin-top: 12px; }
+.tracker-secondary-actions { gap: 14px; margin-top: 18px; }
 .secondary-action { min-height: 62px; gap: 8px; padding: 8px 10px; border-radius: 20px; }
 .secondary-action__icon { width: 36px; height: 36px; border-radius: 12px; }
 .secondary-action__icon svg { width: 17px; height: 17px; }
@@ -1364,5 +1364,5 @@ body {
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0;
-  margin-top: 4px;
+  margin-top: 10px;
 }
