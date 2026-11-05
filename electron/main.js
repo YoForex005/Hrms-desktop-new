@@ -430,6 +430,8 @@ function createWindow() {
         minHeight: 527,
         resizable: false,
         frame: false,
+        hasShadow: false,
+        thickFrame: false,
         titleBarStyle: 'hidden',
         icon: path.join(__dirname, 'assets', 'icon.png'),
         webPreferences: {
