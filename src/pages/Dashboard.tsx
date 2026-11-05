@@ -297,8 +297,10 @@ export default function Dashboard({ view, user, onLogout, version, otaStatus, up
     // Close window logic
     useEffect(() => {
         const handleAppClose = (e: Event) => {
-            // Only stop if they are checked in
-            if (status !== 'stopped') {
+            // Local Electron must be restartable while a shift is active so
+            // developers can pick up main-process changes. The server keeps
+            // the shift and rehydrates it after the next launch.
+            if (!import.meta.env.DEV && status !== 'stopped') {
                 e.preventDefault();
                 setShowCloseWarning(true);
             }

@@ -517,7 +517,11 @@ function createWindow() {
         screenshotScheduler.start();
     });
     mainWindow.on('close', (event) => {
-        if (allowWindowClose || currentShiftStatus === 'stopped') return;
+        // During local development, let the window close so Electron can be
+        // relaunched with main-process changes. The server keeps the active
+        // shift, which is restored on the next launch. Released apps retain
+        // the close guard while a shift is active.
+        if (isDev || allowWindowClose || currentShiftStatus === 'stopped') return;
         event.preventDefault();
         if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('app-close-requested');
