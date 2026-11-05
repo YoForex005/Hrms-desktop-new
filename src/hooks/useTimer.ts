@@ -134,7 +134,9 @@ export function useTimer() {
     const [status, setStatus] = useState<TimerStatus>('stopped');
     const [currentShift, setCurrentShift] = useState<HistoryShift | null>(null);
     const [history, setHistory] = useState<HistoryShift[]>([]);
-    const [loading, setLoading] = useState(false);
+    // Do not offer Clock In until the initial status request determines whether
+    // the employee already has a server-side shift to resume.
+    const [loading, setLoading] = useState(true);
     const [actionLoading, setActionLoading] = useState(false);
     const [error, setError] = useState('');
     const actionInFlightRef = useRef(false);
@@ -668,6 +670,9 @@ export function useTimer() {
     // ── Actions ───────────────────────────────────────────────────────────────
 
     const handleStart = async (workLocation: 'wfh' | 'office') => {
+        // A refresh may have rehydrated an existing shift while the location
+        // dialog was open. Never send a second clock-in request in that case.
+        if (status !== 'stopped') return;
         if (actionInFlightRef.current) return;
         actionInFlightRef.current = true;
         setError('');
@@ -677,7 +682,15 @@ export function useTimer() {
             await fetchStatus();
             await fetchHistory();
         } catch (e: unknown) {
-            setError(e instanceof Error ? e.message : 'Error');
+            const message = e instanceof Error ? e.message : 'Error';
+            if (/shift is already in progress/i.test(message)) {
+                // A pending initial status request and the clock-in request can
+                // reach the server out of order. The existing server-side shift
+                // is authoritative, so rehydrate it instead of showing an error.
+                await Promise.all([fetchStatus(), fetchHistory(), fetchIdleSecs()]);
+            } else {
+                setError(message);
+            }
         } finally {
             actionInFlightRef.current = false;
             setActionLoading(false);
