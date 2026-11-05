@@ -442,7 +442,7 @@ function createWindow() {
             webSecurity: true,
             sandbox: true,
         },
-        backgroundColor: '#0a0b0f',
+        backgroundColor: '#f8fbff',
         show: false, // show only after ready-to-show to avoid white flash
     });
 
