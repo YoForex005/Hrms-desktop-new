@@ -1,7 +1,7 @@
 {
   "name": "emptrakr-desktop",
   "private": true,
-  "version": "1.2.46",
+  "version": "1.2.47",
   "description": "EmpTrakr Desktop Application",
   "author": "EmpTrakr",
   "type": "module",
@@ -11,7 +11,7 @@
     "electron:ensure": "node scripts/ensure-electron.cjs",
     "electron:repair": "node scripts/ensure-electron.cjs --force",
     "dev:react": "vite",
-    "dev:electron": "node scripts/ensure-electron.cjs && wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .",
+    "dev:electron": "node scripts/ensure-electron.cjs && wait-on http://localhost:5173 && cross-env NODE_ENV=development node scripts/watch-electron.cjs",
     "dev": "node scripts/ensure-electron.cjs && concurrently \"npm run dev:react\" \"npm run dev:electron\"",
     "build": "tsc -b && vite build",
     "electron:build": "node scripts/ensure-electron.cjs && npm run build && node scripts/write-electron-config.cjs && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win --publish never",
