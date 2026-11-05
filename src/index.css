@@ -1293,3 +1293,74 @@ body::after {
     transform: rotate(360deg);
   }
 }
+
+/* The final rules keep the compact reference proportions after shared styles. */
+html,
+body {
+  background: transparent;
+}
+
+#root {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 84% 12%, rgba(16, 185, 129, 0.1), transparent 22%),
+    radial-gradient(circle at 10% 88%, rgba(59, 130, 246, 0.07), transparent 24%),
+    #f8fbff;
+}
+
+.titlebar { height: 34px; padding: 0 9px; background: rgba(255, 255, 255, 0.84); border-bottom: 1px solid rgba(226, 232, 240, 0.72); }
+.titlebar__brand-mark { width: auto; height: 15px; }
+.titlebar__right, .titlebar__controls { gap: 4px !important; }
+.titlebar__icon-btn { width: 20px; height: 20px; }
+.layout { height: calc(100vh - 34px); }
+.main { padding: 10px 14px 78px; }
+
+.tracker-greeting { margin: 0 2px 12px; }
+.tracker-greeting h1 { color: #102a4c; font-size: 17px; letter-spacing: -0.45px; line-height: 1.1; }
+.tracker-greeting p { margin-top: 3px; color: #8ba0bf; font-size: 11px; font-weight: 700; }
+.tracker-avatar { width: 36px; height: 36px; border-width: 2px; font-size: 17px; box-shadow: 0 8px 18px rgba(16, 185, 129, 0.22); }
+
+.timer-card { gap: 8px; padding: 12px 12px 11px; border-radius: 30px; background: rgba(255, 255, 255, 0.96); box-shadow: 0 12px 28px rgba(31, 50, 81, 0.08); }
+.timer-card:hover { transform: none; box-shadow: 0 12px 28px rgba(31, 50, 81, 0.08); }
+.timer-clock-icon { width: 44px; height: 44px; }
+.timer-clock-icon svg { width: 25px; height: 25px; }
+.status-badge { min-height: 22px; gap: 5px; padding: 3px 10px; font-size: 9px; letter-spacing: 0.65px; }
+.status-badge .dot { width: 6px; height: 6px; }
+.timer-display { margin-top: 8px; color: #0d172d; font-size: 40px; letter-spacing: -3px; }
+.timer-sub { margin: -2px 0 10px; color: #52627d; font-size: 10px; font-weight: 600; }
+.timer-actions { gap: 8px; }
+
+.action-card { min-height: 90px; gap: 3px; border-radius: 16px; }
+.action-card__icon { width: 28px; height: 28px; border-radius: 8px; }
+.action-card__icon svg { width: 16px; height: 16px; }
+.action-card__title { font-size: 14px; letter-spacing: -0.15px; }
+.action-card__subtitle { font-size: 9px; }
+
+.tracker-secondary-actions { gap: 8px; margin-top: 10px; }
+.secondary-action { min-height: 62px; gap: 8px; padding: 8px 10px; border-radius: 20px; }
+.secondary-action__icon { width: 36px; height: 36px; border-radius: 12px; }
+.secondary-action__icon svg { width: 17px; height: 17px; }
+.secondary-action__copy strong { font-size: 12px; line-height: 1.05; }
+.secondary-action__copy small { font-size: 9px; }
+.secondary-action__arrow { font-size: 24px; }
+
+.version-tag {
+  right: 0;
+  bottom: 51px;
+  left: 0;
+  display: flex;
+  width: 100%;
+  min-height: 27px;
+  align-items: center;
+  padding: 0 4px;
+  border: 1px solid rgba(226, 232, 240, 0.75);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.5);
+  color: #91a3c0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0;
+}

@@ -424,10 +424,11 @@ function startScreenLockDetection() {
 
 function createWindow() {
     mainWindow = new BrowserWindow({
-        width: 480,
-        height: 500,
-        minWidth: 420,
-        minHeight: 420,
+        width: 400,
+        height: 527,
+        minWidth: 400,
+        minHeight: 527,
+        resizable: false,
         frame: false,
         titleBarStyle: 'hidden',
         icon: path.join(__dirname, 'assets', 'icon.png'),
