@@ -354,10 +354,36 @@ export function useTimer() {
         } catch { /* Silently ignore — non-critical */ }
     }, []);
 
-    // Initial load: fetch all data in parallel
+    // Initial load: do not expose a stopped timer until the server has
+    // successfully confirmed the current shift. Electron can need a moment to
+    // restore its encrypted session after a renderer refresh.
     useEffect(() => {
-        Promise.resolve().then(() => Promise.all([fetchStatus(), fetchHistory(), fetchIdleSecs()]))
-            .finally(() => setLoading(false));
+        let cancelled = false;
+        const delay = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms));
+
+        const initialise = async () => {
+            while (!cancelled) {
+                const statusLoaded = await fetchStatus();
+                if (!statusLoaded) {
+                    await delay(1_000);
+                    continue;
+                }
+
+                // Confirm once more after session recovery. This catches the
+                // short hand-off window while Electron restores its bridge.
+                await delay(250);
+                if (!(await fetchStatus())) {
+                    await delay(1_000);
+                    continue;
+                }
+
+                await Promise.all([fetchHistory(), fetchIdleSecs()]);
+                if (!cancelled) setLoading(false);
+                return;
+            }
+        };
+
+        void initialise();
 
         // ── Push initial thresholds to Electron on mount ──────────────────────────
         // Because the main process defaults to 60s/600s on launch, we must sync our
@@ -372,6 +398,8 @@ export function useTimer() {
                 (api as unknown as { setScreenshotInterval: (s: number) => void }).setScreenshotInterval(lastScreenshotIntervalRef.current);
             }
         }
+
+        return () => { cancelled = true; };
     }, [fetchStatus, fetchHistory, fetchIdleSecs]);
 
     // ── Per-second Tick ───────────────────────────────────────────────────────
