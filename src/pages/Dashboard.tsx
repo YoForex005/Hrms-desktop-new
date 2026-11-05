@@ -20,81 +20,21 @@ function StatusBadge({ status }: { status: string }) {
     );
 }
 
-function CompanyBrandHeader({ user }: { user: User }) {
-    const brandName = user.companyName?.trim() || 'EmpTrakr';
-    const logoUrl = user.companyLogoUrl?.trim() || './logo.png';
+function TrackerGreeting({ user }: { user: User }) {
+    const firstName = user.name.trim().split(/\s+/)[0] || 'there';
+    const hour = new Date().getHours();
+    const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
 
     return (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', paddingBottom: 14, paddingTop: 4 }}>
-            <div style={{ display: 'flex', minWidth: 0, maxWidth: '100%', alignItems: 'center', gap: 12 }}>
-                {logoUrl && (
-                    <div
-                        style={{
-                            display: 'flex',
-                            flexShrink: 0,
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            width: 52,
-                            height: 52,
-                            overflow: 'hidden',
-                            borderRadius: 18,
-                            border: '1px solid rgba(226, 232, 240, 0.8)',
-                            background: 'rgba(248, 250, 252, 0.88)',
-                            boxShadow: '0 8px 22px rgba(15, 23, 42, 0.08)',
-                        }}
-                    >
-                        <img
-                            src={logoUrl}
-                            alt={`${brandName} logo`}
-                            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-                        />
-                    </div>
-                )}
-                <div style={{ minWidth: 0 }}>
-                    <div
-                        title={brandName}
-                        style={{
-                            maxWidth: 250,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            fontSize: 18,
-                            fontWeight: 800,
-                            letterSpacing: '-0.02em',
-                            color: 'var(--text-primary)',
-                        }}
-                    >
-                        {brandName}
-                    </div>
-                    <div
-                        style={{
-                            marginTop: 2,
-                            fontSize: 10,
-                            fontWeight: 800,
-                            color: 'var(--accent-dark)',
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.12em',
-                            lineHeight: 1,
-                        }}
-                    >
-                        Time Tracker
-                    </div>
-                    <div
-                        style={{
-                            marginTop: 4,
-                            fontSize: 8,
-                            fontWeight: 700,
-                            color: 'rgba(71, 85, 105, 0.58)',
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.12em',
-                            lineHeight: 1,
-                        }}
-                    >
-                        Powered by EmpTrakr
-                    </div>
-                </div>
+        <header className="tracker-greeting">
+            <div>
+                <h1>{greeting}, <span>{firstName}</span></h1>
+                <p>Have a productive day ahead!</p>
             </div>
-        </div>
+            <div className="tracker-avatar" aria-label={`${user.name}'s profile`}>
+                {firstName.charAt(0).toUpperCase()}
+            </div>
+        </header>
     );
 }
 
@@ -436,20 +376,17 @@ export default function Dashboard({ view, user, onLogout }: DashboardProps) {
             {/* ── TRACKER VIEW ─────────────────────────────────────────────── */}
             {view === 'tracker' && (
                 <>
-                    <CompanyBrandHeader user={user} />
+                    <TrackerGreeting user={user} />
 
                     {/* Timer Control Card */}
                     <div className="timer-card">
-                        {status === 'working' ? (
-                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, marginBottom: 8 }}>
-                                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ filter: 'drop-shadow(0 4px 6px rgba(16, 185, 129, 0.3))' }}>
-                                    <circle cx="12" cy="12" r="10"></circle>
-                                    <polyline points="12 6 12 12 16 14"></polyline>
-                                </svg>
-                            </div>
-                        ) : (
-                            <StatusBadge status={status} />
-                        )}
+                        <div className={`timer-clock-icon ${status}`} aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <circle cx="12" cy="12" r="9" />
+                                <polyline points="12 7 12 12 15.5 14" />
+                            </svg>
+                        </div>
+                        <StatusBadge status={status} />
 
                         <div className={`timer-display ${status}`} id="timer-display">
                             {formatDuration(todayWorked)}
@@ -479,61 +416,64 @@ export default function Dashboard({ view, user, onLogout }: DashboardProps) {
                         <div className="timer-actions">
                             <button
                                 id="btn-check-in"
-                                className="btn btn-success"
+                                className="action-card action-card--success"
                                 onClick={handleClockInClick}
                                 disabled={status !== 'stopped' || actionLoading}
-                                style={{ whiteSpace: 'nowrap' }}
                             >
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3" /></svg>
-                                Clock In
+                                <span className="action-card__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3" /></svg></span>
+                                <span className="action-card__title">Clock In</span>
+                                <span className="action-card__subtitle">Start your shift</span>
                             </button>
 
                             <button
                                 id="btn-break"
-                                className={`btn ${status === 'on_break' ? 'btn-primary' : 'btn-warning'}`}
+                                className={`action-card ${status === 'on_break' ? 'action-card--primary' : 'action-card--warning'}`}
                                 onClick={handleBreak}
                                 disabled={status === 'stopped' || actionLoading || (status !== 'on_break' && todayBreaksCount >= maxBreaks)}
-                                style={{ whiteSpace: 'nowrap' }}
                             >
                                 {status === 'on_break' ? (
-                                    <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3" /></svg>Resume</>
+                                    <><span className="action-card__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3" /></svg></span><span className="action-card__title">Resume</span><span className="action-card__subtitle">Continue working</span></>
                                 ) : (
-                                    <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" /></svg>Break{todayBreaksCount >= maxBreaks ? ' (Max)' : ''}</>
+                                    <><span className="action-card__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" /></svg></span><span className="action-card__title">Take Break{todayBreaksCount >= maxBreaks ? ' (Max)' : ''}</span><span className="action-card__subtitle">Start a break</span></>
                                 )}
                             </button>
 
                             <button
                                 id="btn-check-out"
-                                className="btn btn-danger"
+                                className="action-card action-card--danger"
                                 onClick={handleCheckoutClick}
                                 disabled={status === 'stopped' || actionLoading || proceedingStop}
-                                style={{ whiteSpace: 'nowrap' }}
                             >
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" /></svg>
-                                Clock Out
+                                <span className="action-card__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" /></svg></span>
+                                <span className="action-card__title">Clock Out</span>
+                                <span className="action-card__subtitle">End your shift</span>
                             </button>
                         </div>
                     </div>
 
                     {/* View Dashboard & Logout (Beneath the timer) */}
-                    <div style={{ display: 'flex', justifyContent: 'center', gap: 16, marginTop: 16 }}>
+                    <div className="tracker-secondary-actions">
                         <button
-                            className="btn"
+                            className="secondary-action secondary-action--dashboard"
                             onClick={openDashboard}
                             disabled={openingDashboard}
-                            style={{ flex: 1, padding: '10px', fontSize: 13, background: 'transparent', border: '1px solid #e2e8f0', color: '#64748b', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}
                         >
-
-                            {openingDashboard ? 'Opening…' : 'View Dashboard'}
+                            <span className="secondary-action__icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="4" width="6" height="6" rx="1" /><rect x="14" y="4" width="6" height="6" rx="1" /><rect x="4" y="14" width="6" height="6" rx="1" /><rect x="14" y="14" width="6" height="6" rx="1" /></svg>
+                            </span>
+                            <span className="secondary-action__copy"><strong>{openingDashboard ? 'Opening...' : 'View Dashboard'}</strong><small>Summary &amp; stats</small></span>
+                            <span className="secondary-action__arrow" aria-hidden="true">›</span>
                         </button>
                         <button
-                            className="btn btn-ghost"
+                            className="secondary-action secondary-action--logout"
                             onClick={onLogout}
                             disabled={status !== 'stopped'}
                             title={status !== 'stopped' ? 'Please clock out before logging out' : 'Logout'}
-                            style={{ flex: 1, padding: '10px', fontSize: 13, color: '#ef4444', background: 'transparent', border: 'none', cursor: 'pointer', fontWeight: 600 }}
                         >
-                            Logout
+                            <span className="secondary-action__icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 17l5-5-5-5" /><path d="M15 12H3" /><path d="M21 19V5a2 2 0 00-2-2h-7" /></svg>
+                            </span>
+                            <span className="secondary-action__copy"><strong>Logout</strong><small>{status === 'stopped' ? 'End this session' : 'Clock out first'}</small></span>
                         </button>
                     </div>
                     {dashboardError && <p role="alert" style={{ color: '#b42318', textAlign: 'center', fontSize: 13 }}>{dashboardError}</p>}

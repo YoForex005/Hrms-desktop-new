@@ -607,6 +607,340 @@ body::after {
   }
 }
 
+/* Desktop tracker layout */
+.titlebar {
+  height: 42px;
+  padding: 0 18px;
+  background: rgba(255, 255, 255, 0.88);
+  border-bottom: 1px solid rgba(226, 232, 240, 0.8);
+}
+
+.titlebar__brand-mark {
+  display: block;
+  width: auto;
+  height: 22px;
+  object-fit: contain;
+}
+
+.layout {
+  height: calc(100vh - 42px);
+}
+
+.version-tag {
+  right: auto;
+  bottom: 10px;
+  left: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.main {
+  padding: 16px 22px 30px;
+}
+
+.tracker-greeting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 2px 16px;
+}
+
+.tracker-greeting h1 {
+  color: #123258;
+  font-size: 23px;
+  font-weight: 800;
+  letter-spacing: -0.7px;
+  line-height: 1.2;
+}
+
+.tracker-greeting h1 span {
+  color: #10b981;
+}
+
+.tracker-greeting p {
+  margin-top: 4px;
+  color: #8aa0c4;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.tracker-avatar {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border: 3px solid #d1fae5;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #34d399, #10b981);
+  box-shadow: 0 8px 18px rgba(16, 185, 129, 0.2);
+  color: #fff;
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.timer-card {
+  gap: 10px;
+  margin: 0;
+  padding: 18px 16px 16px;
+  border: 1px solid rgba(226, 232, 240, 0.85);
+  border-radius: 30px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 14px 32px rgba(31, 50, 81, 0.08);
+}
+
+.timer-card:hover {
+  transform: none;
+  box-shadow: 0 14px 32px rgba(31, 50, 81, 0.08);
+}
+
+.timer-clock-icon {
+  display: grid;
+  width: 58px;
+  height: 58px;
+  place-items: center;
+  border: 1px solid #a7f3d0;
+  border-radius: 50%;
+  background: #f0fdf9;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.1);
+  color: #10b981;
+}
+
+.timer-clock-icon svg {
+  width: 32px;
+  height: 32px;
+}
+
+.timer-clock-icon.on_break {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #f59e0b;
+}
+
+.status-badge {
+  min-height: 27px;
+  padding: 5px 14px;
+  font-size: 10px;
+  letter-spacing: 0.7px;
+}
+
+.status-badge .dot {
+  width: 7px;
+  height: 7px;
+}
+
+.timer-display {
+  margin-top: 10px;
+  color: #0f172a;
+  font-size: clamp(42px, 9vw, 54px);
+  font-weight: 800;
+  letter-spacing: -3px;
+}
+
+.timer-sub {
+  margin: -2px 0 12px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.timer-actions {
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.action-card {
+  display: flex;
+  min-height: 126px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid currentColor;
+  border-radius: 22px;
+  background: #fff;
+  color: #64748b;
+  cursor: pointer;
+  font-family: inherit;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.action-card:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 18px rgba(31, 50, 81, 0.1);
+}
+
+.action-card:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.action-card__icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 13px;
+}
+
+.action-card__icon svg {
+  width: 23px;
+  height: 23px;
+}
+
+.action-card__title {
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.25px;
+}
+
+.action-card__subtitle {
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.action-card--success {
+  border-color: #bbf7d0;
+  color: #047857;
+}
+
+.action-card--success .action-card__icon {
+  background: #dcfce7;
+  color: #10b981;
+}
+
+.action-card--warning {
+  border-color: #fde68a;
+  color: #b45309;
+}
+
+.action-card--warning .action-card__icon {
+  background: #fef3c7;
+  color: #d97706;
+}
+
+.action-card--danger {
+  border-color: #fecaca;
+  color: #dc2626;
+}
+
+.action-card--danger .action-card__icon {
+  background: #fee2e2;
+  color: #ef4444;
+}
+
+.action-card--primary {
+  border-color: #bfdbfe;
+  color: #2563eb;
+}
+
+.action-card--primary .action-card__icon {
+  background: #dbeafe;
+  color: #2563eb;
+}
+
+.tracker-secondary-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.secondary-action {
+  display: flex;
+  min-height: 72px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #334155;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.secondary-action:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: #a7f3d0;
+  box-shadow: 0 8px 18px rgba(31, 50, 81, 0.07);
+}
+
+.secondary-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
+.secondary-action__icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 14px;
+}
+
+.secondary-action__icon svg {
+  width: 21px;
+  height: 21px;
+}
+
+.secondary-action__copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.secondary-action__copy strong {
+  color: inherit;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.05;
+}
+
+.secondary-action__copy small {
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.secondary-action__arrow {
+  margin-left: auto;
+  color: #94a3b8;
+  font-size: 29px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.secondary-action--dashboard {
+  border-color: #bbf7d0;
+}
+
+.secondary-action--dashboard .secondary-action__icon {
+  background: #dcfce7;
+  color: #10b981;
+}
+
+.secondary-action--logout .secondary-action__icon {
+  background: #f1f5f9;
+  color: #94a3b8;
+}
+
+@media (max-width: 460px) {
+  .main { padding-inline: 14px; }
+  .tracker-greeting h1 { font-size: 20px; }
+  .action-card { min-height: 112px; border-radius: 18px; }
+  .action-card__title { font-size: 14px; }
+  .action-card__subtitle { font-size: 9px; }
+  .secondary-action { padding: 9px; }
+}
+
 /* ─── Scrollbar ────────────────────────────────────────── */
 ::-webkit-scrollbar {
   width: 4px;

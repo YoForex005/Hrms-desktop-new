@@ -187,7 +187,7 @@ function App() {
     if (!user || !token) {
         return (
             <>
-                <Titlebar userName="Guest" />
+                <Titlebar />
                 {sessionMessage && <p role="alert" style={{ color: 'var(--danger)', margin: '8px 16px' }}>{sessionMessage}</p>}
                 <LoginPage onLogin={handleLogin} />
                 {version && (
@@ -199,7 +199,7 @@ function App() {
 
     return (
         <>
-            <Titlebar userName={user.name} />
+            <Titlebar />
             {logoutError && <p role="alert" style={{ color: 'var(--danger)', margin: '8px 16px', fontSize: 12 }}>{logoutError}</p>}
             <Dashboard view="tracker" user={user} onLogout={handleLogout} />
 

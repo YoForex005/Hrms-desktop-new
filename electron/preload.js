@@ -13,13 +13,27 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
+// Do not let an unavailable synchronous configuration response prevent the
+// entire bridge from being exposed. In particular, device-bound login must
+// remain available even when configuration IPC is temporarily unavailable.
+function getRuntimeConfig() {
+    try {
+        return ipcRenderer.sendSync('get-config') || {};
+    } catch (error) {
+        console.warn('[Preload] Runtime configuration was unavailable during startup:', error?.message || error);
+        return {};
+    }
+}
+
+const runtimeConfig = getRuntimeConfig();
+
 contextBridge.exposeInMainWorld('electronAPI', {
     onSessionEnded: callback => {
         const listener = (_event, detail) => callback(detail);
         ipcRenderer.on('session-ended', listener);
         return () => ipcRenderer.removeListener('session-ended', listener);
     },
-    config: ipcRenderer.sendSync('get-config'),
+    config: runtimeConfig,
     requestApi: request => ipcRenderer.invoke('api-request', request),
     getDeviceId: () => ipcRenderer.invoke('get-device-id'),
     getTrackingConnection: () => ipcRenderer.invoke('get-tracking-connection'),
