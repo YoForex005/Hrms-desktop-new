@@ -60,7 +60,7 @@ test('real dashboard button awaits IPC result and does not use an unsafe browser
             if(name==='../hooks/useTimer')return{useTimer:()=>({status:'stopped',loading:false,connection:{connected:true}}),formatDuration:()=> '00:00:00'};
             if(name==='../hooks/useAppTracker')return{useAppTracker(){}};throw new Error(name);
         }});
-        function find(node){if(Array.isArray(node))return node.map(find).find(Boolean);if(!node||typeof node!=='object')return;if(node.type==='button'&&node.props.children==='View Dashboard')return node;return find(node.props?.children);}
+        function find(node){if(Array.isArray(node))return node.map(find).find(Boolean);if(!node||typeof node!=='object')return;if(node.type==='button'&&(node.props.children==='View Dashboard'||node.props.className?.includes('secondary-action--dashboard')))return node;return find(node.props?.children);}
         return find(exports.default({view:'tracker',user:{id:'employee',name:'Tanu'},onLogout(){}}));
     }
     await render({electronAPI:{openDashboard:async(...args)=>{calls.push(args);return{ok:true};}}}).props.onClick(); assert.deepEqual(calls,[[]]);

@@ -300,7 +300,11 @@ export default function Dashboard({ view, user, onLogout, version, otaStatus, up
             // Local Electron must be restartable while a shift is active so
             // developers can pick up main-process changes. The server keeps
             // the shift and rehydrates it after the next launch.
-            if (!import.meta.env.DEV && status !== 'stopped') {
+            const isDev = Boolean(
+                (globalThis as unknown as { process?: { env?: Record<string, string> } }).process?.env?.NODE_ENV === 'development' ||
+                (typeof window !== 'undefined' && (window.location?.hostname === 'localhost' || window.location?.hostname === '127.0.0.1'))
+            );
+            if (!isDev && status !== 'stopped') {
                 e.preventDefault();
                 setShowCloseWarning(true);
             }

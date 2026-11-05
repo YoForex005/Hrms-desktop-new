@@ -359,7 +359,7 @@ export function useTimer() {
     // restore its encrypted session after a renderer refresh.
     useEffect(() => {
         let cancelled = false;
-        const delay = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms));
+        const delay = (ms: number) => new Promise(resolve => (window?.setTimeout ?? setTimeout)(resolve, ms));
 
         const initialise = async () => {
             while (!cancelled) {
