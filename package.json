@@ -1,7 +1,7 @@
 {
   "name": "emptrakr-desktop",
   "private": true,
-  "version": "1.2.39",
+  "version": "1.2.40",
   "description": "EmpTrakr Desktop Application",
   "author": "EmpTrakr",
   "type": "module",
